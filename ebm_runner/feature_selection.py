@@ -1,0 +1,313 @@
+"""
+Model-based feature subset selection for EBM models.
+
+This module provides feature elimination that iteratively removes features
+and retrains the model, stopping when performance degrades beyond a
+user-specified tolerance.
+
+Two directions are supported:
+- **backward** (default): removes the *least* important feature at each step,
+  yielding a minimal feature set.
+- **forward**: removes the *most* important feature at each step, revealing
+  feature redundancy.
+"""
+
+import time
+import logging
+import warnings
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Union
+
+import numpy as np
+import pandas as pd
+
+from .utils import safe_json
+
+
+@dataclass
+class FeatureSelectionResult:
+    """Container for feature selection results.
+
+    Attributes:
+        selected_features: Final feature set after elimination.
+        baseline_score: CV score using all features.
+        final_score: CV score using the remaining feature subset.
+        tolerance: The tolerance that was configured for elimination.
+        direction: ``"backward"`` or ``"forward"``.
+        history: DataFrame with one row per elimination step showing
+            which feature was removed, the resulting CV score, and the
+            delta from baseline.
+    """
+
+    selected_features: List[str]
+    baseline_score: float
+    final_score: float
+    tolerance: float
+    direction: str
+    history: pd.DataFrame
+
+
+class FeatureSelector:
+    """Feature-elimination selector for EBM models.
+
+    Given an ``EBMRunner`` instance (which controls hyper-parameter search,
+    CV, and scoring settings), this class repeatedly:
+
+    1. Fits an EBM on the current feature set.
+    2. Ranks features by the model's ``term_importances()``.
+    3. Removes the least important (backward) or most important (forward) feature.
+    4. Stops when performance drops beyond *tolerance* or the feature
+       count reaches *min_features*.
+    """
+
+    def __init__(
+        self,
+        runner: Any,  # EBMRunner – import kept lazy to avoid circular refs
+        *,
+        tolerance: float = 0.02,
+        min_features: int = 1,
+        direction: str = "backward",
+    ):
+        """
+        Args:
+            runner: A configured ``EBMRunner`` instance.
+            tolerance: Maximum acceptable relative drop in CV score
+                compared to the baseline (all-features) score.
+                E.g. 0.02 means a 2 % relative drop is tolerated.
+            min_features: Never reduce below this many features.
+            direction: ``"backward"`` (remove least important) or
+                ``"forward"`` (remove most important).
+        """
+        if tolerance < 0:
+            raise ValueError("tolerance must be >= 0")
+        if min_features < 1:
+            raise ValueError("min_features must be >= 1")
+        if direction not in ("backward", "forward"):
+            raise ValueError(f"direction must be 'backward' or 'forward', got {direction!r}")
+
+        self.runner = runner
+        self.tolerance = tolerance
+        self.min_features = min_features
+        self.direction = direction
+        self.logger: logging.Logger = runner.logger
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def select_features(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[pd.Series, np.ndarray],
+        *,
+        feature_names: Optional[List[str]] = None,
+    ) -> FeatureSelectionResult:
+        """Run feature elimination.
+
+        The *direction* set at construction time controls whether the
+        least important (backward) or most important (forward) feature
+        is removed at each step.
+
+        Args:
+            X: Feature matrix (DataFrame or array).
+            y: Target variable.
+            feature_names: Required when *X* is an ndarray.
+
+        Returns:
+            A ``FeatureSelectionResult`` with the remaining feature subset.
+        """
+        from .utils import is_classification_target  # local import to keep top-level light
+
+        label = (
+            "backward-elimination" if self.direction == "backward"
+            else "forward-elimination (redundancy analysis)"
+        )
+
+        start = time.time()
+        self.logger.info("=" * 60)
+        self.logger.info(f"Starting {label} feature selection")
+        self.logger.info(f"  tolerance = {self.tolerance}  |  min_features = {self.min_features}")
+        self.logger.info("=" * 60)
+
+        # --- prepare data ------------------------------------------------
+        X_df, y_arr, feature_names = self.runner._prepare_data(X, y, feature_names)
+        is_clf = is_classification_target(y_arr, self.runner.force_task)
+
+        current_features: List[str] = list(feature_names)
+
+        # --- baseline (all features) ------------------------------------
+        baseline_score, baseline_model = self._fit_and_score(
+            X_df[current_features], y_arr, is_clf
+        )
+        self.logger.info(f"Baseline CV score ({len(current_features)} features): {baseline_score:.6f}")
+
+        history_rows: List[Dict[str, Any]] = [
+            {
+                "step": 0,
+                "n_features": len(current_features),
+                "removed_feature": None,
+                "cv_score": baseline_score,
+                "delta_from_baseline": 0.0,
+                "relative_drop": 0.0,
+            }
+        ]
+
+        best_features = list(current_features)
+        best_score = baseline_score
+        step = 0
+
+        # Index into the sorted-descending importances DataFrame:
+        #   backward → remove last (least important)
+        #   forward  → remove first (most important)
+        remove_idx = -1 if self.direction == "backward" else 0
+
+        # --- iterative elimination --------------------------------------
+        while len(current_features) > self.min_features:
+            step += 1
+
+            # Rank features by importance from the *current* model
+            importances = self._get_importances(baseline_model if step == 1 else model, current_features)
+            target_feature = importances.iloc[remove_idx]["feature"]
+
+            candidate_features = [f for f in current_features if f != target_feature]
+            self.logger.info(
+                f"Step {step}: removing '{target_feature}' "
+                f"({len(candidate_features)} features remaining)"
+            )
+
+            score, model = self._fit_and_score(X_df[candidate_features], y_arr, is_clf)
+
+            # For maximised metrics the score is positive; we want to
+            # detect a *drop*.  For neg_* metrics (e.g. neg_rmse) the
+            # score is negative, so a "drop" means the value became
+            # more negative.  In both cases, checking
+            #   (baseline - score) / |baseline|  >  tolerance
+            # captures a worsening.
+            abs_baseline = abs(baseline_score) if abs(baseline_score) > 1e-12 else 1e-12
+            relative_drop = (baseline_score - score) / abs_baseline
+
+            delta = score - baseline_score
+
+            history_rows.append(
+                {
+                    "step": step,
+                    "n_features": len(candidate_features),
+                    "removed_feature": target_feature,
+                    "cv_score": score,
+                    "delta_from_baseline": delta,
+                    "relative_drop": relative_drop,
+                }
+            )
+
+            self.logger.info(
+                f"  CV score: {score:.6f}  |  "
+                f"delta: {delta:+.6f}  |  "
+                f"relative drop: {relative_drop:.4f}"
+            )
+
+            if relative_drop > self.tolerance:
+                self.logger.info(
+                    f"  Stopping: relative drop {relative_drop:.4f} > "
+                    f"tolerance {self.tolerance:.4f}"
+                )
+                break
+
+            # Accept the removal
+            current_features = candidate_features
+            best_features = list(current_features)
+            best_score = score
+
+        elapsed = time.time() - start
+        self.logger.info("-" * 60)
+        self.logger.info(
+            f"Feature selection complete in {elapsed:.1f}s  |  "
+            f"{len(best_features)}/{len(feature_names)} features retained"
+        )
+        self.logger.info(f"Selected features: {best_features}")
+        self.logger.info(
+            f"Baseline score: {baseline_score:.6f}  |  "
+            f"Final score: {best_score:.6f}"
+        )
+
+        history_df = pd.DataFrame(history_rows)
+
+        return FeatureSelectionResult(
+            selected_features=best_features,
+            baseline_score=baseline_score,
+            final_score=best_score,
+            tolerance=self.tolerance,
+            direction=self.direction,
+            history=history_df,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _fit_and_score(
+        self,
+        X: pd.DataFrame,
+        y: np.ndarray,
+        is_clf: bool,
+    ) -> tuple:
+        """Fit an EBM via the runner's CV/search pipeline and return (best_cv_score, best_model)."""
+        search = self.runner._create_search(is_clf, y, param_space=None)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            search.fit(X, y)
+        return search.best_score_, search.best_estimator_
+
+    def _get_importances(
+        self,
+        model: Any,
+        feature_names: List[str],
+    ) -> pd.DataFrame:
+        """Return a DataFrame of (feature, importance) sorted descending by importance.
+
+        Uses ``term_importances()`` which returns one importance value per
+        term (feature or interaction).  We keep only the single-feature
+        terms that are in *feature_names* and ignore interaction terms.
+        """
+        try:
+            importances = model.term_importances()
+            term_names = model.term_names_
+
+            rows = []
+            for name, imp in zip(term_names, importances):
+                # Skip interaction terms (they contain " & " or are tuples)
+                if isinstance(name, (tuple, list)):
+                    continue
+                if isinstance(name, str) and " & " in name:
+                    continue
+                if name in feature_names:
+                    rows.append({"feature": name, "importance": float(imp)})
+
+            df = pd.DataFrame(rows).sort_values("importance", ascending=False).reset_index(drop=True)
+            return df
+
+        except Exception as e:
+            self.logger.warning(f"term_importances() failed ({e}), falling back to explain_global()")
+            return self._get_importances_fallback(model, feature_names)
+
+    def _get_importances_fallback(
+        self,
+        model: Any,
+        feature_names: List[str],
+    ) -> pd.DataFrame:
+        """Fallback: extract importances from explain_global()."""
+        global_exp = model.explain_global()
+        gd = global_exp.data()
+        names = list(gd.get("names", []))
+        scores = np.asarray(gd.get("scores", []), dtype=float)
+
+        rows = []
+        for name, score in zip(names, scores):
+            if isinstance(name, (tuple, list)):
+                continue
+            if isinstance(name, str) and " & " in name:
+                continue
+            if name in feature_names:
+                rows.append({"feature": name, "importance": float(abs(score))})
+
+        df = pd.DataFrame(rows).sort_values("importance", ascending=False).reset_index(drop=True)
+        return df
