@@ -102,6 +102,7 @@ def _run_from_csv(
     tuning_stratified: bool = True,
     eval_n_splits: int = 5,
     eval_stratified: bool = True,
+    tune_once: bool = False,
 ) -> None:
     """Run the EBM pipeline on a user-supplied CSV dataset."""
     logger.info("=" * 60)
@@ -142,14 +143,13 @@ def _run_from_csv(
     force_task = "classification" if task == "clf" else "regression"
     runner = EBMRunner(
         output_dir=f"./ebm_output",
-        n_iter=30,
-        enable_interactions=True,
         force_task=force_task,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
         tuning_stratified=tuning_stratified,
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
+        tune_once=tune_once,
         feature_names=ebm_feature_names,
         feature_types=ebm_feature_types,
         logger=logger,
@@ -205,6 +205,7 @@ def _run_classification(
     tuning_stratified: bool = True,
     eval_n_splits: int = 5,
     eval_stratified: bool = True,
+    tune_once: bool = False,
 ) -> None:
     """Run the breast-cancer classification demo."""
     logger.info("=" * 60)
@@ -216,13 +217,12 @@ def _run_classification(
 
     runner = EBMRunner(
         output_dir="./ebm_breast_cancer",
-        n_iter=3,
-        enable_interactions=True,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
         tuning_stratified=tuning_stratified,
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
+        tune_once=tune_once,
         logger=logger,
     )
 
@@ -275,7 +275,9 @@ def _run_regression(
     tuning_n_splits: int = 5,
     tuning_stratified: bool = True,
     eval_n_splits: int = 5,
+
     eval_stratified: bool = True,
+    tune_once: bool = False,
 ) -> None:
     """Run the diabetes regression demo."""
     logger.info("")
@@ -288,13 +290,12 @@ def _run_regression(
 
     runner = EBMRunner(
         output_dir="./ebm_diabetes",
-        n_iter=30,
-        enable_interactions=True,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
         tuning_stratified=tuning_stratified,
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
+        tune_once=tune_once,
         logger=logger,
     )
 
@@ -407,6 +408,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--tune-once",
+        action="store_true",
+        default=_DEFAULTS.tune_once,
+        help="Tune hyperparameters once on the full dataset, then reuse for feature selection steps.",
+    )
+    parser.add_argument(
         "--tuning-folds",
         type=int,
         default=_DEFAULTS.tuning_n_splits,
@@ -458,6 +465,7 @@ def main() -> None:
         tuning_stratified=not args.no_tuning_stratify,
         eval_n_splits=args.eval_folds,
         eval_stratified=not args.no_eval_stratify,
+        tune_once=args.tune_once,
     )
 
     # ── CSV dataset mode ─────────────────────────────────────────────

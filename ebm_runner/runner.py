@@ -77,24 +77,25 @@ class EBMRunner:
     def __init__(
         self,
         *,
-        output_dir: str = "./ebm_output",
-        random_state: int = 42,
+        output_dir: str = RunConfig.output_dir,
+        random_state: int = RunConfig.random_state,
         force_task: Optional[str] = None,
-        test_size: float = 0.2,
-        val_size: float = 0.0,
+        test_size: float = RunConfig.test_size,
+        val_size: float = RunConfig.val_size,
         n_splits: Optional[int] = None,
-        n_iter: int = 40,
-        use_grid: bool = False,
-        n_jobs: int = -1,
-        ebm_n_jobs: int = 1,
+        n_iter: int = RunConfig.n_iter,
+        use_grid: bool = RunConfig.use_grid,
+        n_jobs: int = RunConfig.n_jobs,
+        ebm_n_jobs: int = RunConfig.ebm_n_jobs,
         top_n_features_in_report: int = 12,
         n_local_samples_in_report: int = 3,
-        enable_interactions: bool = True,
+        enable_interactions: bool = RunConfig.enable_interactions,
         eval_strategy: str = RunConfig.eval_strategy,
         tuning_n_splits: int = RunConfig.tuning_n_splits,
         tuning_stratified: bool = RunConfig.tuning_stratified,
         eval_n_splits: int = RunConfig.eval_n_splits,
         eval_stratified: bool = RunConfig.eval_stratified,
+        tune_once: bool = RunConfig.tune_once,
         feature_names: Optional[List[str]] = None,
         feature_types: Optional[List[str]] = None,
         logger: Optional[logging.Logger] = None,
@@ -121,6 +122,7 @@ class EBMRunner:
             tuning_stratified: Stratify tuning folds for classification
             eval_n_splits: CV folds for cv_only evaluation
             eval_stratified: Stratify eval folds for classification
+            tune_once: If True, tune hyperparameters once on full features
             feature_names: Optional list of feature names for EBM
             feature_types: Optional list of feature types for EBM
             logger: Optional logger instance
@@ -150,6 +152,7 @@ class EBMRunner:
         self.ebm_n_jobs = ebm_n_jobs
         self.enable_interactions = enable_interactions
         self.eval_strategy = eval_strategy
+        self.tune_once = tune_once
         self.feature_names = feature_names
         self.feature_types = feature_types
 
@@ -237,7 +240,8 @@ class EBMRunner:
         """Strategy: train/test split → CV-tune on train → evaluate on holdout."""
         X_train, X_test, y_train, y_test = self._split_data(X_df, y_arr, is_clf)
 
-        search = self._create_search(is_clf, y_train, param_space)
+        search = self._create_search(is_clf, y_train, param_space,
+                                      active_features=list(X_train.columns))
         best_model = self._run_hyperparameter_search(search, X_train, y_train)
 
         y_pred, y_proba, test_result = self._evaluate_model(
@@ -285,7 +289,8 @@ class EBMRunner:
         )
 
         # Run hyper-parameter search on the full dataset
-        search = self._create_search(is_clf, y_arr, param_space)
+        search = self._create_search(is_clf, y_arr, param_space,
+                                      active_features=list(X_df.columns))
         best_model = self._run_hyperparameter_search(search, X_df, y_arr)
 
         # Collect per-fold CV scores as the evaluation metric
@@ -372,7 +377,8 @@ class EBMRunner:
             "Use with caution."
         )
 
-        search = self._create_search(is_clf, y_arr, param_space)
+        search = self._create_search(is_clf, y_arr, param_space,
+                                      active_features=list(X_df.columns))
         best_model = self._run_hyperparameter_search(search, X_df, y_arr)
 
         best_params = search.best_params_
@@ -471,10 +477,11 @@ class EBMRunner:
         self,
         is_clf: bool,
         y_train: np.ndarray,
-        param_space: Optional[Dict[str, Any]]
+        param_space: Optional[Dict[str, Any]],
+        active_features: Optional[List[str]] = None,
     ):
         """Create hyperparameter search object."""
-        estimator = self._make_estimator(is_clf)
+        estimator = self._make_estimator(is_clf, active_features=active_features)
         space = param_space or self._default_param_space(is_clf)
         cv = self._make_cv(
             is_clf, y_train,
@@ -483,11 +490,26 @@ class EBMRunner:
         )
         scoring = self._make_scoring(is_clf, y_train)
 
-        self.logger.info(f"Scoring for tuning: {scoring}")
-        self.logger.info(
-            f"Hyperparameter search method: "
-            f"{'GridSearchCV' if self.use_grid else 'RandomizedSearchCV'}"
+        # ── Search summary header ─────────────────────────────────────
+        method = "GridSearchCV" if self.use_grid else "RandomizedSearchCV"
+        n_candidates = (
+            int(np.prod([len(v) if hasattr(v, '__len__') else 1 for v in space.values()]))
+            if self.use_grid
+            else self.n_iter
         )
+        n_folds = cv.get_n_splits() if hasattr(cv, 'get_n_splits') else self.tuning_n_splits
+        total_fits = n_candidates * n_folds
+
+        self.logger.info(
+            f"Hyperparameter search: {method} | "
+            f"{n_candidates} candidates × {n_folds}-fold CV = {total_fits} fits | "
+            f"scoring={scoring}"
+        )
+        space_desc = ", ".join(
+            f"{k} ({len(v)} values)" if hasattr(v, '__len__') else f"{k} (1 value)"
+            for k, v in space.items()
+        )
+        self.logger.info(f"Search space: {space_desc}")
 
         if self.use_grid:
             search = GridSearchCV(
@@ -496,7 +518,7 @@ class EBMRunner:
                 scoring=scoring,
                 cv=cv,
                 n_jobs=self.n_jobs,
-                verbose=0,
+                verbose=1,
                 refit=True,
             )
         else:
@@ -508,7 +530,7 @@ class EBMRunner:
                 cv=cv,
                 n_jobs=self.n_jobs,
                 random_state=self.random_state,
-                verbose=0,
+                verbose=1,
                 refit=True,
             )
         
@@ -516,10 +538,39 @@ class EBMRunner:
 
     def _run_hyperparameter_search(self, search, X_train, y_train):
         """Run hyperparameter search and return best model."""
-        self.logger.info("Fitting hyperparameter search...")
+        self.logger.info("Fitting hyperparameter search …")
+        t0 = time.time()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             search.fit(X_train, y_train)
+        elapsed = time.time() - t0
+
+        # ── Elapsed time ──────────────────────────────────────────────
+        mins, secs = divmod(int(elapsed), 60)
+        self.logger.info(
+            f"Hyperparameter search completed in "
+            f"{f'{mins}m ' if mins else ''}{secs}s"
+        )
+
+        # ── Top-10 candidates table ───────────────────────────────────
+        cv_df = (
+            pd.DataFrame(search.cv_results_)
+            .sort_values("rank_test_score")
+            .head(10)
+        )
+        param_cols = [c for c in cv_df.columns if c.startswith("param_")]
+        self.logger.info("── Top 10 candidates " + "─" * 50)
+        for _, row in cv_df.iterrows():
+            rank = int(row["rank_test_score"])
+            mean = row["mean_test_score"]
+            std  = row["std_test_score"]
+            params = "  ".join(
+                f"{c.replace('param_', '')}={row[c]}"
+                for c in param_cols
+            )
+            self.logger.info(
+                f"  #{rank:<3d} mean={mean:.6f}  std={std:.6f}  {params}"
+            )
 
         self.logger.info(f"Best CV score: {search.best_score_:.6f}")
         self.logger.info(f"Best params: {safe_json(search.best_params_)}")
@@ -583,16 +634,40 @@ class EBMRunner:
         }
         return space
 
-    def _make_estimator(self, is_classification: bool):
-        """Create EBM estimator."""
+    def _make_estimator(self, is_classification: bool, *, active_features: Optional[List[str]] = None):
+        """Create EBM estimator.
+
+        Args:
+            is_classification: Whether this is a classification task.
+            active_features: When provided (e.g. during feature selection),
+                only these features (a subset of ``self.feature_names``)
+                are passed to the EBM so that the name/type lists match
+                the columns of the data.
+        """
         kwargs = dict(
             random_state=self.random_state,
             n_jobs=self.ebm_n_jobs,
         )
-        if self.feature_names is not None:
-            kwargs["feature_names"] = self.feature_names
-        if self.feature_types is not None:
-            kwargs["feature_types"] = self.feature_types
+
+        # Determine the feature_names / feature_types to pass.
+        # If active_features is given (feature selection is narrowing the
+        # data), we filter to keep only those features.
+        feat_names = self.feature_names
+        feat_types = self.feature_types
+
+        if active_features is not None and feat_names is not None:
+            # Build an index from original name → position so we can
+            # look up the matching type for each active feature.
+            name_to_idx = {n: i for i, n in enumerate(feat_names)}
+            indices = [name_to_idx[f] for f in active_features if f in name_to_idx]
+            feat_names = [feat_names[i] for i in indices]
+            if feat_types is not None:
+                feat_types = [feat_types[i] for i in indices]
+
+        if feat_names is not None:
+            kwargs["feature_names"] = feat_names
+        if feat_types is not None:
+            kwargs["feature_types"] = feat_types
 
         if is_classification:
             return ExplainableBoostingClassifier(**kwargs)

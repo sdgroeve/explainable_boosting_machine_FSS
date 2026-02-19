@@ -53,12 +53,13 @@ class RunConfig:
     tuning_stratified: bool = True       # stratify tuning folds (clf only)
     eval_n_splits: int = 5              # CV folds for cv_only evaluation
     eval_stratified: bool = True         # stratify eval folds (clf only)
-    n_iter: int = 40
+    n_iter: int = 2
     use_grid: bool = False
-    n_jobs: int = -1
-    ebm_n_jobs: int = 1
+    n_jobs: int = 1
+    ebm_n_jobs: int = -1
     enable_interactions: bool = True
     eval_strategy: str = "train_only"   # "train_test" | "cv_only" | "train_only"
+    tune_once: bool = False             # if True, tune only once on full features
     
     # Sub-configurations
     plot_config: PlotConfig = field(default_factory=PlotConfig)

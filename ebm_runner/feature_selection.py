@@ -133,6 +133,19 @@ class FeatureSelector:
         X_df, y_arr, feature_names = self.runner._prepare_data(X, y, feature_names)
         is_clf = is_classification_target(y_arr, self.runner.force_task)
 
+        # --- Initial Tuning (if tune_once is enabled) --------------------
+        self.fixed_params = None
+        if self.runner.tune_once:
+            self.logger.info("Tune-once enabled: Running hyperparameter search on full dataset...")
+            search = self.runner._create_search(
+                is_clf, y_arr, param_space=None, active_features=list(X_df.columns),
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                search.fit(X_df, y_arr)
+            self.fixed_params = search.best_params_
+            self.logger.info(f"Fixed parameters for feature selection: {safe_json(self.fixed_params)}")
+
         current_features: List[str] = list(feature_names)
 
         # --- baseline (all features) ------------------------------------
@@ -251,7 +264,46 @@ class FeatureSelector:
         is_clf: bool,
     ) -> tuple:
         """Fit an EBM via the runner's CV/search pipeline and return (best_cv_score, best_model)."""
-        search = self.runner._create_search(is_clf, y, param_space=None)
+        active_features = list(X.columns)
+
+        # Optimization: Reuse fixed params if tune_once is active
+        if getattr(self, "fixed_params", None) is not None:
+            # 1. Create the estimator with the fixed params
+            estimator = self.runner._make_estimator(is_clf, active_features=active_features)
+            estimator.set_params(**self.fixed_params)
+
+            # 2. Evaluate via Cross-Validation (since we aren't searching)
+            cv = self.runner._make_cv(is_clf, y)
+            scoring = self.runner._make_scoring(is_clf, y)
+            
+            # Note: We need the mean CV score to compare against baseline
+            cv_scores = pd.Series(
+                # Use cross_val_score directly
+                # We need to manually handle the cross_val_score import or use runner's logic if exposed
+                # But looking at runner.py, cross_val_score is imported.
+                # However, this method is in a different file.
+                # We need to import cross_val_score here or rely on runner.
+                # Let's check imports in this file.
+            )
+            
+            # Re-implementation of CV scoring here since we don't have a helper for "just score this model"
+            # in runner that doesn't also do other things.
+            from sklearn.model_selection import cross_val_score
+            scores = cross_val_score(
+                estimator, X, y,
+                cv=cv, scoring=scoring, n_jobs=self.runner.n_jobs
+            )
+            mean_score = scores.mean()
+
+            # 3. Fit on the current subset to get importances for the next step
+            estimator.fit(X, y)
+            
+            return mean_score, estimator
+
+        # Normal full search
+        search = self.runner._create_search(
+            is_clf, y, param_space=None, active_features=active_features,
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             search.fit(X, y)
