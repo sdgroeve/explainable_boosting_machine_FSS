@@ -96,6 +96,8 @@ class EBMRunner:
         eval_n_splits: int = RunConfig.eval_n_splits,
         eval_stratified: bool = RunConfig.eval_stratified,
         tune_once: bool = RunConfig.tune_once,
+        tuning_verbose: int = RunConfig.tuning_verbose,
+        tuning_show_all: bool = RunConfig.tuning_show_all,
         feature_names: Optional[List[str]] = None,
         feature_types: Optional[List[str]] = None,
         logger: Optional[logging.Logger] = None,
@@ -153,6 +155,8 @@ class EBMRunner:
         self.enable_interactions = enable_interactions
         self.eval_strategy = eval_strategy
         self.tune_once = tune_once
+        self.tuning_verbose = tuning_verbose
+        self.tuning_show_all = tuning_show_all
         self.feature_names = feature_names
         self.feature_types = feature_types
 
@@ -518,7 +522,7 @@ class EBMRunner:
                 scoring=scoring,
                 cv=cv,
                 n_jobs=self.n_jobs,
-                verbose=1,
+                verbose=self.tuning_verbose,
                 refit=True,
             )
         else:
@@ -530,7 +534,7 @@ class EBMRunner:
                 cv=cv,
                 n_jobs=self.n_jobs,
                 random_state=self.random_state,
-                verbose=1,
+                verbose=self.tuning_verbose,
                 refit=True,
             )
         
@@ -552,14 +556,19 @@ class EBMRunner:
             f"{f'{mins}m ' if mins else ''}{secs}s"
         )
 
-        # ── Top-10 candidates table ───────────────────────────────────
+        # ── Candidates table ──────────────────────────────────────────
+        n_show = None if self.tuning_show_all else 10
         cv_df = (
             pd.DataFrame(search.cv_results_)
             .sort_values("rank_test_score")
-            .head(10)
         )
+        if n_show:
+            cv_df = cv_df.head(n_show)
+            label = f"Top {len(cv_df)} candidates"
+        else:
+            label = f"All {len(cv_df)} candidates"
         param_cols = [c for c in cv_df.columns if c.startswith("param_")]
-        self.logger.info("── Top 10 candidates " + "─" * 50)
+        self.logger.info(f"── {label} " + "─" * (65 - len(label)))
         for _, row in cv_df.iterrows():
             rank = int(row["rank_test_score"])
             mean = row["mean_test_score"]

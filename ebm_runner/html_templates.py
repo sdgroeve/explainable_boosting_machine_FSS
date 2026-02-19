@@ -257,6 +257,7 @@ TOC_SECTION = """
         <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
         <li><a href="#interactions">4. Feature Interactions</a></li>
         <li><a href="#local-explanations">5. Local Explanations</a></li>
+        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
     </ul>
 </div>
 """
@@ -270,7 +271,8 @@ TOC_SECTION_WITH_FS = """
         <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
         <li><a href="#interactions">4. Feature Interactions</a></li>
         <li><a href="#local-explanations">5. Local Explanations</a></li>
-        <li><a href="#feature-selection">6. Feature Subset Selection (Backward)</a></li>
+        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
+        <li><a href="#feature-selection">7. Feature Subset Selection (Backward)</a></li>
     </ul>
 </div>
 """
@@ -284,8 +286,9 @@ TOC_SECTION_WITH_BOTH_FS = """
         <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
         <li><a href="#interactions">4. Feature Interactions</a></li>
         <li><a href="#local-explanations">5. Local Explanations</a></li>
-        <li><a href="#feature-selection">6. Feature Subset Selection (Backward)</a></li>
-        <li><a href="#forward-selection">7. Feature Redundancy Analysis (Forward)</a></li>
+        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
+        <li><a href="#feature-selection">7. Feature Subset Selection (Backward)</a></li>
+        <li><a href="#forward-selection">8. Feature Redundancy Analysis (Forward)</a></li>
     </ul>
 </div>
 """
@@ -299,7 +302,8 @@ TOC_SECTION_WITH_FWD_FS = """
         <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
         <li><a href="#interactions">4. Feature Interactions</a></li>
         <li><a href="#local-explanations">5. Local Explanations</a></li>
-        <li><a href="#forward-selection">6. Feature Redundancy Analysis (Forward)</a></li>
+        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
+        <li><a href="#forward-selection">7. Feature Redundancy Analysis (Forward)</a></li>
     </ul>
 </div>
 """
@@ -505,4 +509,41 @@ FORWARD_SELECTION_SECTION_START = """
 <code>term_importances()</code>) is removed, the model is retrained, and the
 CV score is compared to the all-features baseline. A small score drop after
 removing a top feature indicates that other features carry similar information.</p>
+"""
+# ── Hyperparameter Tuning Templates ──────────────────────────────────
+TUNING_SECTION_START = """
+<h2 id="hyperparameter-tuning">{section_number}. Hyperparameter Tuning Results</h2>
+<p>The model was tuned using {method} with {n_candidates} candidates and {n_folds}-fold cross-validation. 
+The best parameters found were:</p>
+<div class="alert alert-info">
+    {best_params_display}
+</div>
+<p>The table below shows all evaluated parameter combinations, ranked by their mean test score.</p>
+"""
+
+TUNING_TABLE_START = """
+<table>
+    <thead>
+        <tr>
+            <th>Rank</th>
+            <th>Mean Score</th>
+            <th>Std Score</th>
+            <th>Parameters</th>
+        </tr>
+    </thead>
+    <tbody>
+"""
+
+TUNING_TABLE_ROW = """
+        <tr>
+            <td>#{rank}</td>
+            <td class="metric-value">{mean_score:.6f}</td>
+            <td>&plusmn;{std_score:.6f}</td>
+            <td><code>{params}</code></td>
+        </tr>
+"""
+
+TUNING_TABLE_END = """
+    </tbody>
+</table>
 """

@@ -61,6 +61,10 @@ from .html_templates import (
     EVAL_NOTE_TRAIN_TEST,
     EVAL_NOTE_CV_ONLY,
     EVAL_NOTE_TRAIN_ONLY,
+    TUNING_SECTION_START,
+    TUNING_TABLE_START,
+    TUNING_TABLE_ROW,
+    TUNING_TABLE_END,
 )
 
 
@@ -147,17 +151,20 @@ class HTMLReportGenerator:
         content_parts.append(self._add_interactions(best_model))
         content_parts.append(self._add_local_explanations(best_model, X_test, y_test))
 
-        # Backward feature selection (section 6)
+        # Hyperparameter tuning (section 6)
+        content_parts.append(self._add_tuning_section(cv_results, section_number=6))
+
+        # Backward feature selection (section 7)
         if feature_selection_result:
             content_parts.append(self._add_feature_selection(
                 feature_selection_result,
                 section_start_template=FEATURE_SELECTION_SECTION_START,
-                section_number=6,
+                section_number=7,
             ))
 
-        # Forward feature selection / redundancy analysis (section 6 or 7)
+        # Forward feature selection / redundancy analysis (section 7 or 8)
         if forward_selection_result:
-            fwd_section_num = 7 if feature_selection_result else 6
+            fwd_section_num = 8 if feature_selection_result else 7
             content_parts.append(self._add_feature_selection(
                 forward_selection_result,
                 section_start_template=FORWARD_SELECTION_SECTION_START,
@@ -480,6 +487,53 @@ class HTMLReportGenerator:
         except Exception as e:
             self.logger.error(f"Failed to generate feature selection section: {e}")
             parts.append(NO_DATA_MESSAGE)
+
+        return "\n".join(parts)
+
+    def _add_tuning_section(
+        self,
+        cv_results: pd.DataFrame,
+        section_number: int = 6,
+    ) -> str:
+        """Add hyperparameter tuning results section."""
+        if cv_results is None or cv_results.empty:
+            return f"<h2 id='hyperparameter-tuning'>{section_number}. Hyperparameter Tuning</h2>{NO_DATA_MESSAGE}"
+
+        # Detect search method
+        # Since we don't pass the search object, we guess from cv_results
+        # RandomizedSearchCV usually has 'mean_fit_time' and 'std_fit_time'
+        method = "RandomizedSearchCV" if "mean_fit_time" in cv_results.columns else "Hyperparameter Search"
+        
+        # Best params are in the first row after sorting by rank (which we expect cv_results to be)
+        best_row = cv_results.iloc[0]
+        param_cols = [c for c in cv_results.columns if c.startswith("param_") and not c.endswith("_")]
+        best_params_dict = {c.replace("param_", ""): best_row[c] for c in param_cols}
+        best_params_display = " &nbsp; ".join(f"<code>{k}={v}</code>" for k, v in best_params_dict.items())
+
+        n_candidates = len(cv_results)
+        # Find n_folds from split score columns
+        split_cols = [c for c in cv_results.columns if c.startswith("split") and c.endswith("_test_score")]
+        n_folds = len(split_cols)
+
+        parts = [TUNING_SECTION_START.format(
+            section_number=section_number,
+            method=method,
+            n_candidates=n_candidates,
+            n_folds=n_folds,
+            best_params_display=best_params_display
+        )]
+
+        parts.append(TUNING_TABLE_START)
+        for _, row in cv_results.iterrows():
+            params_dict = {c.replace("param_", ""): row[c] for c in param_cols}
+            params_str = ", ".join(f"{k}={v}" for k, v in params_dict.items())
+            parts.append(TUNING_TABLE_ROW.format(
+                rank=int(row["rank_test_score"]),
+                mean_score=float(row["mean_test_score"]),
+                std_score=float(row["std_test_score"]),
+                params=params_str
+            ))
+        parts.append(TUNING_TABLE_END)
 
         return "\n".join(parts)
 
