@@ -277,36 +277,7 @@ TOC_SECTION_WITH_FS = """
 </div>
 """
 
-TOC_SECTION_WITH_BOTH_FS = """
-<div class="toc">
-    <h2>Table of Contents</h2>
-    <ul>
-        <li><a href="#performance">1. Prediction Performance</a></li>
-        <li><a href="#global-importance">2. Global Feature Importance</a></li>
-        <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
-        <li><a href="#interactions">4. Feature Interactions</a></li>
-        <li><a href="#local-explanations">5. Local Explanations</a></li>
-        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
-        <li><a href="#feature-selection">7. Feature Subset Selection (Backward)</a></li>
-        <li><a href="#forward-selection">8. Feature Redundancy Analysis (Forward)</a></li>
-    </ul>
-</div>
-"""
 
-TOC_SECTION_WITH_FWD_FS = """
-<div class="toc">
-    <h2>Table of Contents</h2>
-    <ul>
-        <li><a href="#performance">1. Prediction Performance</a></li>
-        <li><a href="#global-importance">2. Global Feature Importance</a></li>
-        <li><a href="#individual-features">3. Individual Feature Analysis</a></li>
-        <li><a href="#interactions">4. Feature Interactions</a></li>
-        <li><a href="#local-explanations">5. Local Explanations</a></li>
-        <li><a href="#hyperparameter-tuning">6. Hyperparameter Tuning</a></li>
-        <li><a href="#forward-selection">7. Feature Redundancy Analysis (Forward)</a></li>
-    </ul>
-</div>
-"""
 
 PERFORMANCE_SECTION_START = """
 <h2 id="performance">1. Prediction Performance</h2>
@@ -517,16 +488,7 @@ FEATURE_SELECTION_PLOT = """
 </div>
 """
 
-# ── Forward Selection (Redundancy) Section Templates ─────────────────
 
-FORWARD_SELECTION_SECTION_START = """
-<h2 id="forward-selection">{section_number}. Feature Redundancy Analysis (Forward Elimination)</h2>
-<p>Forward elimination was used to test feature redundancy. At each step the
-<strong>most</strong> important feature (according to the model's
-<code>term_importances()</code>) is removed, the model is retrained, and the
-CV score is compared to the all-features baseline. A small score drop after
-removing a top feature indicates that other features carry similar information.</p>
-"""
 # ── Hyperparameter Tuning Templates ──────────────────────────────────
 TUNING_SECTION_START = """
 <h2 id="hyperparameter-tuning">{section_number}. Hyperparameter Tuning Results</h2>

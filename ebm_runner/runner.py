@@ -191,7 +191,6 @@ class EBMRunner:
         report_name: str = "ebm_report.html",
         model_name: str = "best_ebm_model.joblib",
         feature_selection_result: Optional[Any] = None,
-        forward_selection_result: Optional[Any] = None,
     ) -> EBMRunArtifacts:
         """
         Complete EBM workflow: train, tune, evaluate, and report.
@@ -217,19 +216,19 @@ class EBMRunner:
             artifacts = self._run_train_test(
                 X_df, y_arr, is_clf, feature_names, param_space,
                 report_name, model_name,
-                feature_selection_result, forward_selection_result,
+                feature_selection_result,
             )
         elif self.eval_strategy == "cv_only":
             artifacts = self._run_cv_only(
                 X_df, y_arr, is_clf, feature_names, param_space,
                 report_name, model_name,
-                feature_selection_result, forward_selection_result,
+                feature_selection_result,
             )
         else:  # train_only
             artifacts = self._run_train_only(
                 X_df, y_arr, is_clf, feature_names, param_space,
                 report_name, model_name,
-                feature_selection_result, forward_selection_result,
+                feature_selection_result,
             )
 
         elapsed = time.time() - start_time
@@ -243,7 +242,7 @@ class EBMRunner:
     def _run_train_test(
         self, X_df, y_arr, is_clf, feature_names, param_space,
         report_name, model_name,
-        feature_selection_result, forward_selection_result,
+        feature_selection_result,
     ) -> EBMRunArtifacts:
         """Strategy: train/test split → CV-tune on train → evaluate on holdout."""
         # Preserve original index so we can write predictions in dataset order
@@ -272,7 +271,7 @@ class EBMRunner:
         # Positive-class rows for local explanations  (predicted label == 1)
         explain_positive_X = None
         explain_positive_y = None
-        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+        if self.explain_positive_class and is_clf and feature_selection_result is None:
             pos_mask = y_pred == 1
             if pos_mask.any():
                 explain_positive_X = X_test[pos_mask]
@@ -291,7 +290,6 @@ class EBMRunner:
             cv_results=pd.DataFrame(search.cv_results_).sort_values("rank_test_score"),
             y_pred=y_pred, y_proba=y_proba,
             feature_selection_result=feature_selection_result,
-            forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
             explain_positive_X=explain_positive_X,
             explain_positive_y=explain_positive_y,
@@ -312,7 +310,7 @@ class EBMRunner:
     def _run_cv_only(
         self, X_df, y_arr, is_clf, feature_names, param_space,
         report_name, model_name,
-        feature_selection_result, forward_selection_result,
+        feature_selection_result,
     ) -> EBMRunArtifacts:
         """Strategy: CV-tune on all data, no holdout."""
         self.logger.info(
@@ -375,7 +373,7 @@ class EBMRunner:
         # Positive-class rows for local explanations (predicted label == 1)
         explain_positive_X = None
         explain_positive_y = None
-        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+        if self.explain_positive_class and is_clf and feature_selection_result is None:
             pos_mask = y_pred == 1
             if pos_mask.any():
                 explain_positive_X = X_df[pos_mask]
@@ -397,7 +395,6 @@ class EBMRunner:
             cv_results=pd.DataFrame(search.cv_results_).sort_values("rank_test_score"),
             y_pred=y_pred, y_proba=y_proba,
             feature_selection_result=feature_selection_result,
-            forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
             explain_positive_X=explain_positive_X,
             explain_positive_y=explain_positive_y,
@@ -418,7 +415,7 @@ class EBMRunner:
     def _run_train_only(
         self, X_df, y_arr, is_clf, feature_names, param_space,
         report_name, model_name,
-        feature_selection_result, forward_selection_result,
+        feature_selection_result,
     ) -> EBMRunArtifacts:
         """Strategy: tune via CV on all data, refit on all data, evaluate on training set."""
         self.logger.info(
@@ -457,7 +454,7 @@ class EBMRunner:
         # Positive-class rows for local explanations
         explain_positive_X = None
         explain_positive_y = None
-        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+        if self.explain_positive_class and is_clf and feature_selection_result is None:
             pos_mask = y_pred == 1
             if pos_mask.any():
                 explain_positive_X = X_df[pos_mask]
@@ -476,7 +473,6 @@ class EBMRunner:
             cv_results=pd.DataFrame(search.cv_results_).sort_values("rank_test_score"),
             y_pred=y_pred, y_proba=y_proba,
             feature_selection_result=feature_selection_result,
-            forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
             explain_positive_X=explain_positive_X,
             explain_positive_y=explain_positive_y,
@@ -828,6 +824,7 @@ class EBMRunner:
         *,
         tolerance: float = 0.02,
         min_features: int = 1,
+        step_percent: float = 0.0,
         feature_names: Optional[List[str]] = None,
     ) -> "FeatureSelectionResult":
         """Find a minimal feature subset with near-equivalent performance.
@@ -844,6 +841,7 @@ class EBMRunner:
             tolerance: Maximum acceptable *relative* drop in CV score
                 compared to the all-features baseline (e.g. 0.02 = 2%).
             min_features: Never reduce below this many features.
+            step_percent: Percentage of current features to remove at each step.
             feature_names: Optional feature names (required if X is array).
 
         Returns:
@@ -856,42 +854,8 @@ class EBMRunner:
             runner=self,
             tolerance=tolerance,
             min_features=min_features,
+            step_percent=step_percent,
         )
         return selector.select_features(X, y, feature_names=feature_names)
 
-    def select_features_forward(
-        self,
-        X: Union[pd.DataFrame, np.ndarray],
-        y: Union[pd.Series, np.ndarray],
-        *,
-        tolerance: float = 0.02,
-        min_features: int = 1,
-        feature_names: Optional[List[str]] = None,
-    ) -> "FeatureSelectionResult":
-        """Identify redundant features via forward elimination.
 
-        Starting from all features, the *most* important feature is
-        removed at each step.  If the CV score barely drops, it means
-        other features carry similar information.
-
-        Args:
-            X: Feature matrix (DataFrame or array).
-            y: Target variable (Series or array).
-            tolerance: Maximum acceptable *relative* drop in CV score
-                compared to the all-features baseline (e.g. 0.02 = 2%).
-            min_features: Never reduce below this many features.
-            feature_names: Optional feature names (required if X is array).
-
-        Returns:
-            A ``FeatureSelectionResult`` with the remaining features, scores,
-            and a step-by-step elimination history.
-        """
-        from .feature_selection import FeatureSelector
-
-        selector = FeatureSelector(
-            runner=self,
-            tolerance=tolerance,
-            min_features=min_features,
-            direction="forward",
-        )
-        return selector.select_features(X, y, feature_names=feature_names)

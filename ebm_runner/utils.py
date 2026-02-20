@@ -174,12 +174,17 @@ def is_classification_target(
             f"force_task must be one of: classification/clf/class or regression/reg/regr, got '{force}'"
         )
 
-    y_arr = np.asarray(y)
-    # Heuristic: small number of unique values suggests classification
-    unique = pd.unique(pd.Series(y_arr).dropna())
+    y_series = pd.Series(y).dropna()
+    
+    # If it's objects/strings/categories, it's definitely classification
+    if y_series.dtype == 'object' or isinstance(y_series.dtype, pd.CategoricalDtype) or y_series.dtype == 'bool':
+        return True
+
+    # Heuristic for numeric types: small number of unique values implies classes
+    unique = y_series.unique()
     if len(unique) <= 20:
         return True
-    # Many unique values suggests regression
+        
     return False
 
 

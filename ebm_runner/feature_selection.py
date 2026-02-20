@@ -12,6 +12,7 @@ Two directions are supported:
   feature redundancy.
 """
 
+import os
 import time
 import logging
 import warnings
@@ -43,7 +44,6 @@ class FeatureSelectionResult:
     baseline_score: float
     final_score: float
     tolerance: float
-    direction: str
     history: pd.DataFrame
 
 
@@ -66,7 +66,7 @@ class FeatureSelector:
         *,
         tolerance: float = 0.02,
         min_features: int = 1,
-        direction: str = "backward",
+        step_percent: float = 0.0,
     ):
         """
         Args:
@@ -75,20 +75,19 @@ class FeatureSelector:
                 compared to the baseline (all-features) score.
                 E.g. 0.02 means a 2 % relative drop is tolerated.
             min_features: Never reduce below this many features.
-            direction: ``"backward"`` (remove least important) or
-                ``"forward"`` (remove most important).
+            step_percent: Percentage of current features to remove at each step.
         """
         if tolerance < 0:
             raise ValueError("tolerance must be >= 0")
         if min_features < 1:
             raise ValueError("min_features must be >= 1")
-        if direction not in ("backward", "forward"):
-            raise ValueError(f"direction must be 'backward' or 'forward', got {direction!r}")
+        if step_percent < 0.0 or step_percent >= 1.0:
+            raise ValueError("step_percent must be in [0.0, 1.0)")
 
         self.runner = runner
         self.tolerance = tolerance
         self.min_features = min_features
-        self.direction = direction
+        self.step_percent = step_percent
         self.logger: logging.Logger = runner.logger
 
     # ------------------------------------------------------------------
@@ -104,9 +103,7 @@ class FeatureSelector:
     ) -> FeatureSelectionResult:
         """Run feature elimination.
 
-        The *direction* set at construction time controls whether the
-        least important (backward) or most important (forward) feature
-        is removed at each step.
+        label = "backward-elimination"
 
         Args:
             X: Feature matrix (DataFrame or array).
@@ -118,10 +115,7 @@ class FeatureSelector:
         """
         from .utils import is_classification_target  # local import to keep top-level light
 
-        label = (
-            "backward-elimination" if self.direction == "backward"
-            else "forward-elimination (redundancy analysis)"
-        )
+        label = "backward-elimination"
 
         start = time.time()
         self.logger.info("=" * 60)
@@ -169,22 +163,28 @@ class FeatureSelector:
         best_score = baseline_score
         step = 0
 
-        # Index into the sorted-descending importances DataFrame:
-        #   backward → remove last (least important)
-        #   forward  → remove first (most important)
-        remove_idx = -1 if self.direction == "backward" else 0
-
         # --- iterative elimination --------------------------------------
         while len(current_features) > self.min_features:
             step += 1
 
             # Rank features by importance from the *current* model
             importances = self._get_importances(baseline_model if step == 1 else model, current_features)
-            target_feature = importances.iloc[remove_idx]["feature"]
-
-            candidate_features = [f for f in current_features if f != target_feature]
+            
+            num_to_remove = 1
+            if self.step_percent > 0:
+                num_to_remove = max(1, int(len(current_features) * self.step_percent))
+            
+            # Ensure we don't go below min_features in one big jump
+            num_to_remove = min(num_to_remove, len(current_features) - self.min_features)
+            
+            # backward -> remove least important features (bottom of the descending sorted list)
+            target_features = importances["feature"].iloc[-num_to_remove:].tolist()
+            
+            candidate_features = [f for f in current_features if f not in target_features]
+            target_features_str = ", ".join(target_features)
+            
             self.logger.info(
-                f"Step {step}: removing '{target_feature}' "
+                f"Step {step}: removing {len(target_features)} features: {target_features_str} "
                 f"({len(candidate_features)} features remaining)"
             )
 
@@ -205,7 +205,7 @@ class FeatureSelector:
                 {
                     "step": step,
                     "n_features": len(candidate_features),
-                    "removed_feature": target_feature,
+                    "removed_feature": target_features_str,
                     "cv_score": score,
                     "delta_from_baseline": delta,
                     "relative_drop": relative_drop,
@@ -244,12 +244,18 @@ class FeatureSelector:
 
         history_df = pd.DataFrame(history_rows)
 
+        out_path = os.path.join(self.runner.output_dir, "feature_selection_summary.csv")
+        try:
+            history_df.to_csv(out_path, index=False)
+            self.logger.info(f"Saved feature selection summary to {out_path}")
+        except Exception as e:
+            self.logger.warning(f"Could not save feature selection summary: {e}")
+
         return FeatureSelectionResult(
             selected_features=best_features,
             baseline_score=baseline_score,
             final_score=best_score,
             tolerance=self.tolerance,
-            direction=self.direction,
             history=history_df,
         )
 

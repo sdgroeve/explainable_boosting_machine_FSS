@@ -13,8 +13,6 @@ A comprehensive framework for training, tuning, evaluating, and interpreting **E
     - Local explanations for individual samples
 - 🧬 **Feature Selection**:
     - **Backward elimination** – iteratively removes the *least* important feature to find a minimal subset
-    - **Forward elimination** – iteratively removes the *most* important feature to reveal redundancy
-    - Both modes can run in a single invocation and appear side-by-side in the HTML report
 - 📂 **CSV Dataset Support**: Load any CSV, specify a target column, and optionally supply feature-type definitions
 - 🌐 **HTML Reports**: Single-file interactive reports with embedded plots, metrics, and full model interpretation
 - 🧩 **Modular Design**: Clean, maintainable code structure with separate modules for each concern
@@ -57,11 +55,11 @@ Run with your own CSV data:
 python run.py --data my_dataset.csv --target label --task clf
 ```
 
-Enable both feature-selection modes:
+Enable backward feature-selection:
 
 ```bash
 python run.py --data my_dataset.csv --target label --task clf \
-    --feature-selection --forward-selection \
+    --feature-selection \
     --fs-tolerance 0.02 --fs-min-features 3
 ```
 
@@ -84,14 +82,12 @@ runner = EBMRunner(
 # Optional: backward feature selection
 fs_result = runner.select_features(X, y, tolerance=0.02, min_features=3)
 
-# Optional: forward feature selection (redundancy analysis)
-fwd_result = runner.select_features_forward(X, y, tolerance=0.02, min_features=3)
+
 
 # Train, tune, evaluate, and generate HTML report
 artifacts = runner.fit_optimize_validate(
     X, y,
     feature_selection_result=fs_result,
-    forward_selection_result=fwd_result,
 )
 
 print(f"Model saved to: {artifacts.model_path}")
@@ -108,7 +104,7 @@ print(f"Test metrics: {artifacts.test_result.metrics}")
 | `--target` | — | Name of the target column in the CSV. |
 | `--feature-types` | — | Path to a two-column CSV (`feature`, `type`) with EBM feature-type definitions. |
 | `--feature-selection` | off | Enable backward-elimination feature selection. |
-| `--forward-selection` | off | Enable forward-elimination (redundancy analysis) feature selection. |
+
 | `--fs-tolerance` | `0.02` | Maximum relative CV-score drop allowed during elimination (0.02 = 2%). |
 | `--fs-min-features` | `3` | Minimum number of features to keep. |
 | `--eval-strategy` | `train_test` | `train_test`, `cv_only`, or `train_only` (see below). |
@@ -188,7 +184,7 @@ Defines the argument parser and three "run" functions:
 - **`_run_from_csv`** – loads a user-supplied CSV, optionally loads a feature-type definition file, runs feature selection(s), trains the model, and generates the report.
 - **`_run_classification` / `_run_regression`** – convenience wrappers that use scikit-learn toy datasets for quick demos.
 
-Each function creates an `EBMRunner`, optionally calls `select_features()` and/or `select_features_forward()`, then calls `fit_optimize_validate()`.
+Each function creates an `EBMRunner`, optionally calls `select_features()`, then calls `fit_optimize_validate()`.
 
 #### `ebm_runner/runner.py` – `EBMRunner`
 
@@ -197,9 +193,8 @@ The central orchestrator. Key concepts:
 | Method | Purpose |
 |---|---|
 | `__init__` | Stores all configuration (output dir, CV folds, tuning iterations, feature names/types, etc.). |
-| `fit_optimize_validate` | End-to-end pipeline: prepares data → runs hyper-parameter search → evaluates on the test set → generates the HTML report. Accepts optional `feature_selection_result` and `forward_selection_result` to include in the report. |
-| `select_features` | Convenience wrapper that creates a `FeatureSelector(direction="backward")` and runs it. |
-| `select_features_forward` | Same, but with `direction="forward"`. |
+| `fit_optimize_validate` | End-to-end pipeline: prepares data → runs hyper-parameter search → evaluates on the test set → generates the HTML report. Accepts optional `feature_selection_result` to include in the report. |
+| `select_features` | Convenience wrapper that creates a `FeatureSelector` and runs it. |
 | `_make_estimator` | Instantiates `ExplainableBoostingClassifier` or `ExplainableBoostingRegressor`, forwarding any user-supplied `feature_names` / `feature_types`. |
 | `_prepare_data` | Coerces raw arrays / DataFrames into a standard `(DataFrame, ndarray, feature_names)` triple. |
 
@@ -209,11 +204,11 @@ Implements iterative feature elimination:
 
 1. Train an EBM on all features and record the baseline CV score.
 2. At each step, rank features by `term_importances()`.
-3. Remove the **least** important (backward) or **most** important (forward) feature.
+3. Remove the **least** important feature.
 4. Retrain, compare the new CV score to the baseline.
 5. Stop when the relative score drop exceeds `tolerance` or `min_features` is reached.
 
-The `direction` parameter (`"backward"` or `"forward"`) controls which feature is removed. Both modes produce a `FeatureSelectionResult` dataclass containing:
+This produces a `FeatureSelectionResult` dataclass containing:
 
 - `selected_features` – features remaining after elimination
 - `baseline_score` / `final_score` – CV scores before and after
@@ -232,7 +227,7 @@ The `direction` parameter (`"backward"` or `"forward"`) controls which feature i
 6. Feature interactions
 7. Local explanations
 8. *(Optional)* Backward elimination results – summary, history table, elimination curve
-9. *(Optional)* Forward elimination results – same layout, different heading and description
+
 
 All plots are embedded as base64 PNG images, so the report is a single portable HTML file.
 
@@ -327,7 +322,6 @@ The generated HTML report includes:
 6. **Feature Interactions** – plots for all detected interactions
 7. **Local Interpretation** – per-sample feature contributions
 8. **Feature Subset Selection (Backward)** – *(when `--feature-selection` is enabled)* summary, history table, elimination curve
-9. **Feature Redundancy Analysis (Forward)** – *(when `--forward-selection` is enabled)* same layout, revealing how much information top features share with others
 
 ## Troubleshooting
 
@@ -372,7 +366,7 @@ This code is provided as-is for educational and research purposes.
 - CSV dataset loading via `--data` / `--target` CLI arguments
 - Feature-type definition file support (`--feature-types`)
 - Backward-elimination feature selection (`--feature-selection`)
-- Forward-elimination / redundancy analysis (`--forward-selection`)
+
 - Robust handling of non-numeric targets and missing values
 
 ### v1.1.0

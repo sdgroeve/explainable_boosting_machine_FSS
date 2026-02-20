@@ -91,12 +91,13 @@ def _run_from_csv(
     *,
     data_path: str,
     target_column: str,
+    output_dir: str = "./ebm_output",
     feature_types_path: Optional[str] = None,
     task: str = "clf",
     feature_selection: bool = False,
-    forward_selection: bool = False,
     fs_tolerance: float = 0.02,
     fs_min_features: int = 3,
+    fs_step_percent: float = 0.0,
     eval_strategy: str = "train_test",
     tuning_n_splits: int = 5,
     tuning_stratified: bool = True,
@@ -105,6 +106,7 @@ def _run_from_csv(
     tune_once: bool = False,
     explain_positive_class: bool = False,
     save_predictions: bool = False,
+    ebm_n_jobs: int = -1,
 ) -> None:
     """Run the EBM pipeline on a user-supplied CSV dataset."""
     logger.info("=" * 60)
@@ -144,7 +146,7 @@ def _run_from_csv(
 
     force_task = "classification" if task == "clf" else "regression"
     runner = EBMRunner(
-        output_dir=f"./ebm_output",
+        output_dir=output_dir,
         force_task=force_task,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
@@ -154,6 +156,7 @@ def _run_from_csv(
         tune_once=tune_once,
         explain_positive_class=explain_positive_class,
         save_predictions=save_predictions,
+        ebm_n_jobs=ebm_n_jobs,
         feature_names=ebm_feature_names,
         feature_types=ebm_feature_types,
         logger=logger,
@@ -166,30 +169,17 @@ def _run_from_csv(
             X, y,
             tolerance=fs_tolerance,
             min_features=fs_min_features,
+            step_percent=fs_step_percent,
         )
         logger.info(
             f"Backward: selected {len(fs_result.selected_features)}/{X.shape[1]} features: "
             f"{fs_result.selected_features}"
         )
 
-    # Optional forward (redundancy) feature selection
-    fwd_result = None
-    if forward_selection:
-        fwd_result = runner.select_features_forward(
-            X, y,
-            tolerance=fs_tolerance,
-            min_features=fs_min_features,
-        )
-        logger.info(
-            f"Forward: {len(fwd_result.selected_features)}/{X.shape[1]} features remaining: "
-            f"{fwd_result.selected_features}"
-        )
-
     artifacts = runner.fit_optimize_validate(
         X, y,
         report_name="ebm_report.html",
         feature_selection_result=fs_result,
-        forward_selection_result=fwd_result,
     )
 
     logger.info(f"HTML report: {artifacts.report_html_path}")
@@ -200,10 +190,11 @@ def _run_from_csv(
 def _run_classification(
     logger: logging.Logger,
     *,
+    output_dir: str = "./ebm_breast_cancer",
     feature_selection: bool = False,
-    forward_selection: bool = False,
     fs_tolerance: float = 0.02,
     fs_min_features: int = 3,
+    fs_step_percent: float = 0.0,
     eval_strategy: str = "train_test",
     tuning_n_splits: int = 5,
     tuning_stratified: bool = True,
@@ -212,6 +203,7 @@ def _run_classification(
     tune_once: bool = False,
     explain_positive_class: bool = False,
     save_predictions: bool = False,
+    ebm_n_jobs: int = -1,
 ) -> None:
     """Run the breast-cancer classification demo."""
     logger.info("=" * 60)
@@ -222,7 +214,7 @@ def _run_classification(
     X, y = data.data, data.target
 
     runner = EBMRunner(
-        output_dir="./ebm_breast_cancer",
+        output_dir=output_dir,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
         tuning_stratified=tuning_stratified,
@@ -231,6 +223,7 @@ def _run_classification(
         tune_once=tune_once,
         explain_positive_class=explain_positive_class,
         save_predictions=save_predictions,
+        ebm_n_jobs=ebm_n_jobs,
         logger=logger,
     )
 
@@ -241,30 +234,17 @@ def _run_classification(
             X, y,
             tolerance=fs_tolerance,
             min_features=fs_min_features,
+            step_percent=fs_step_percent,
         )
         logger.info(
             f"Backward: selected {len(fs_result.selected_features)}/{X.shape[1]} features: "
             f"{fs_result.selected_features}"
         )
 
-    # Optional forward (redundancy) feature selection
-    fwd_result = None
-    if forward_selection:
-        fwd_result = runner.select_features_forward(
-            X, y,
-            tolerance=fs_tolerance,
-            min_features=fs_min_features,
-        )
-        logger.info(
-            f"Forward: {len(fwd_result.selected_features)}/{X.shape[1]} features remaining: "
-            f"{fwd_result.selected_features}"
-        )
-
     artifacts = runner.fit_optimize_validate(
         X, y,
         report_name="ebm_classification_report.html",
         feature_selection_result=fs_result,
-        forward_selection_result=fwd_result,
     )
 
     logger.info(f"HTML report: {artifacts.report_html_path}")
@@ -275,10 +255,11 @@ def _run_classification(
 def _run_regression(
     logger: logging.Logger,
     *,
+    output_dir: str = "./ebm_diabetes",
     feature_selection: bool = False,
-    forward_selection: bool = False,
     fs_tolerance: float = 0.02,
     fs_min_features: int = 3,
+    fs_step_percent: float = 0.0,
     eval_strategy: str = "train_test",
     tuning_n_splits: int = 5,
     tuning_stratified: bool = True,
@@ -287,6 +268,7 @@ def _run_regression(
     tune_once: bool = False,
     explain_positive_class: bool = False,
     save_predictions: bool = False,
+    ebm_n_jobs: int = -1,
 ) -> None:
     """Run the diabetes regression demo."""
     logger.info("")
@@ -298,14 +280,16 @@ def _run_regression(
     X, y = data.data, data.target
 
     runner = EBMRunner(
-        output_dir="./ebm_diabetes",
+        output_dir=output_dir,
         eval_strategy=eval_strategy,
         tuning_n_splits=tuning_n_splits,
         tuning_stratified=tuning_stratified,
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
         tune_once=tune_once,
+        explain_positive_class=explain_positive_class,
         save_predictions=save_predictions,
+        ebm_n_jobs=ebm_n_jobs,
         logger=logger,
     )
 
@@ -316,35 +300,85 @@ def _run_regression(
             X, y,
             tolerance=fs_tolerance,
             min_features=fs_min_features,
+            step_percent=fs_step_percent,
         )
         logger.info(
             f"Backward: selected {len(fs_result.selected_features)}/{X.shape[1]} features: "
             f"{fs_result.selected_features}"
         )
 
-    # Optional forward (redundancy) feature selection
-    fwd_result = None
-    if forward_selection:
-        fwd_result = runner.select_features_forward(
-            X, y,
-            tolerance=fs_tolerance,
-            min_features=fs_min_features,
-        )
-        logger.info(
-            f"Forward: {len(fwd_result.selected_features)}/{X.shape[1]} features remaining: "
-            f"{fwd_result.selected_features}"
-        )
-
     artifacts = runner.fit_optimize_validate(
         X, y,
         report_name="ebm_regression_report.html",
         feature_selection_result=fs_result,
-        forward_selection_result=fwd_result,
     )
 
     logger.info(f"HTML report: {artifacts.report_html_path}")
     logger.info(f"Model:       {artifacts.model_path}")
     logger.info(f"Test metrics: {artifacts.test_result.metrics}")
+
+
+def _run_proxy_test(
+    logger: logging.Logger,
+    data_path: str,
+    target_column: str,
+    proxy_features_file: str,
+    proxy_num_features: int,
+    output_dir: str = "./ebm_output",
+    n_jobs: int = -1,
+) -> None:
+    from ebm_runner.proxy_test import ProxyTestAnalyzer
+    from ebm_runner.proxy_reporting import ProxyReportGenerator
+    import pandas as pd
+
+    logger.info("=" * 60)
+    logger.info("Proxy Test Mode")
+    logger.info("=" * 60)
+
+    try:
+        data_df = pd.read_csv(data_path)
+    except Exception as e:
+        logger.error(f"Failed to load dataset {data_path}: {e}")
+        return
+
+    try:
+        proxy_df = pd.read_csv(proxy_features_file)
+    except Exception as e:
+        logger.error(f"Failed to load proxy features file {proxy_features_file}: {e}")
+        return
+
+    if target_column in data_df.columns:
+        data_df = data_df.drop(columns=[target_column])
+
+    all_features = data_df.columns.tolist()
+
+    if "removed_feature" in proxy_df.columns:
+        removed_in_order = proxy_df["removed_feature"].dropna().tolist()
+        removed_in_order = [f.strip() for item in removed_in_order for f in str(item).split(",")]
+    else:
+        # Fallback if it's just a list of features in the first column
+        removed_in_order = proxy_df.iloc[:, 0].dropna().tolist()
+        removed_in_order = [f.strip() for item in removed_in_order for f in str(item).split(",")]
+
+    # The features NOT removed are the most important.
+    never_removed = [f for f in all_features if f not in removed_in_order]
+    
+    # Rank: never removed (best), then last removed, ..., first removed (worst)
+    ranked_features = never_removed + list(reversed(removed_in_order))
+    
+    # Keep only those present in dataset
+    ranked_features = [f for f in ranked_features if f in data_df.columns]
+
+    # Select top N
+    selected_features = ranked_features[:proxy_num_features]
+    
+    logger.info(f"Selected Top {proxy_num_features} features to test: {selected_features}")
+
+    analyzer = ProxyTestAnalyzer(logger=logger, n_jobs=n_jobs)
+    results = analyzer.analyze(data_df, selected_features)
+
+    reporter = ProxyReportGenerator(output_dir=output_dir, logger=logger)
+    reporter.generate_report(results)
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
@@ -353,6 +387,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run EBM model training with optional feature selection.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./ebm_output",
+        help="Directory to save EBM outputs (models, reports, etc.). If it does not exist, it will be created.",
     )
     parser.add_argument(
         "--task",
@@ -389,22 +429,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable backward-elimination feature selection.",
     )
     parser.add_argument(
+        "--proxy-features-file",
+        type=str,
+        default=None,
+        help="Path to the feature selection summary CSV for Proxy testing.",
+    )
+    parser.add_argument(
+        "--proxy-num-features",
+        type=int,
+        default=5,
+        help="Number of most important features to analyze in the Proxy Test.",
+    )
+    parser.add_argument(
         "--fs-tolerance",
         type=float,
         default=0.02,
         help="Maximum relative CV-score drop allowed during elimination (default: 0.02 = 2%%).",
     )
     parser.add_argument(
+        "--fs-step-percent",
+        type=float,
+        default=0.0,
+        help="Percentage of current features to remove at each step (e.g., 0.1 for 10%%). Default 0 removes 1 by 1.",
+    )
+    parser.add_argument(
         "--fs-min-features",
         type=int,
         default=3,
         help="Minimum number of features to keep (default: 3).",
-    )
-    parser.add_argument(
-        "--forward-selection",
-        action="store_true",
-        default=False,
-        help="Enable forward-elimination (redundancy analysis) feature selection.",
     )
     parser.add_argument(
         "--eval-strategy",
@@ -462,6 +514,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=_DEFAULTS.save_predictions,
         help="Write predictions.csv to the output directory with per-datapoint predictions in original dataset order.",
     )
+    parser.add_argument(
+        "--ebm-n-jobs",
+        type=int,
+        default=_DEFAULTS.ebm_n_jobs,
+        help=f"Number of parallel jobs for EBM internal training (default: {_DEFAULTS.ebm_n_jobs}).",
+    )
     return parser
 
 
@@ -481,10 +539,11 @@ def main() -> None:
         sys.exit(1)
 
     fs_kwargs = dict(
+        output_dir=args.output_dir,
         feature_selection=args.feature_selection,
-        forward_selection=args.forward_selection,
         fs_tolerance=args.fs_tolerance,
         fs_min_features=args.fs_min_features,
+        fs_step_percent=args.fs_step_percent,
         eval_strategy=args.eval_strategy,
         tuning_n_splits=args.tuning_folds,
         tuning_stratified=not args.no_tuning_stratify,
@@ -493,10 +552,23 @@ def main() -> None:
         tune_once=args.tune_once,
         explain_positive_class=args.explain_positive_class,
         save_predictions=args.save_predictions,
+        ebm_n_jobs=args.ebm_n_jobs,
     )
 
     # ── CSV dataset mode ─────────────────────────────────────────────
     if args.data:
+        if args.proxy_features_file:
+            _run_proxy_test(
+                logger,
+                data_path=args.data,
+                target_column=args.target,
+                proxy_features_file=args.proxy_features_file,
+                proxy_num_features=args.proxy_num_features,
+                output_dir=args.output_dir,
+                n_jobs=args.ebm_n_jobs or -1,
+            )
+            return
+
         task = args.task if args.task != "all" else "clf"
         _run_from_csv(
             logger,

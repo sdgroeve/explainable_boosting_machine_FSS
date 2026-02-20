@@ -7,7 +7,7 @@ regression diagnostics).
 """
 
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -619,4 +619,62 @@ def plot_feature_density(
         logger.error(f"Failed to plot density for {feature_name}: {e}")
         return None
 
+def plot_proxy_importances(
+    top_proxies: List[Dict[str, float]],
+    target_feature: str,
+    score: float,
+    scoring_metric: str,
+    figsize: tuple = (7.5, 3.5),
+    logger: Optional[logging.Logger] = None
+) -> plt.Figure:
+    """
+    Plot the top proxy features importances for predicting the target feature.
+    
+    Args:
+        top_proxies: List of dicts with 'feature' and 'importance'
+        target_feature: Name of the feature being predicted
+        score: The predictive score (e.g., AUC or R^2)
+        scoring_metric: Metric used for the score
+        figsize: Figure size
+        logger: Optional logger
+        
+    Returns:
+        Matplotlib figure object
+    """
+    if logger is None:
+        logger = logging.getLogger("ebm_runner")
+        
+    fig = plt.figure(figsize=figsize)
+    
+    try:
+        if not top_proxies:
+            plt.text(0.5, 0.5, "No surrogate/proxy features found.", 
+                    ha='center', va='center', transform=plt.gca().transAxes)
+            plt.axis("off")
+            return fig
+            
+        names = [p["feature"] for p in top_proxies]
+        importances = [p["importance"] for p in top_proxies]
+        
+        # We plot horizontal bars, top proxy at the top
+        y_pos = range(len(names))[::-1]
+        
+        plt.barh(y_pos, importances, color="#3498db")
+        plt.yticks(y_pos, names)
+        plt.xlabel("Importance in Proxy Model")
+        plt.title(f"Best proxies for '{target_feature}'\\nScore ({scoring_metric}): {score:.4f}")
+        
+        # Annotate bars with values
+        for i, v in zip(y_pos, importances):
+            plt.text(v, i, f" {v:.4f}", va='center', fontsize=9)
+            
+        plt.tight_layout()
+        return fig
+        
+    except Exception as e:
+        logger.error(f"Failed to plot proxy importances for '{target_feature}': {e}")
+        plt.text(0.5, 0.5, f"Error plotting proxy importances:\\n{str(e)}", 
+                ha='center', va='center', transform=plt.gca().transAxes)
+        plt.axis("off")
+        return fig
 

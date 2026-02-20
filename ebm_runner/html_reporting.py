@@ -34,8 +34,6 @@ from .html_templates import (
     SUMMARY_SECTION,
     TOC_SECTION,
     TOC_SECTION_WITH_FS,
-    TOC_SECTION_WITH_BOTH_FS,
-    TOC_SECTION_WITH_FWD_FS,
     PERFORMANCE_SECTION_START,
     METRICS_TABLE_START,
     METRICS_TABLE_ROW,
@@ -58,7 +56,6 @@ from .html_templates import (
     FEATURE_SELECTION_HISTORY_ROW,
     FEATURE_SELECTION_HISTORY_TABLE_END,
     FEATURE_SELECTION_PLOT,
-    FORWARD_SELECTION_SECTION_START,
     EVAL_NOTE_TRAIN_TEST,
     EVAL_NOTE_CV_ONLY,
     EVAL_NOTE_TRAIN_ONLY,
@@ -102,7 +99,6 @@ class HTMLReportGenerator:
         y_pred: np.ndarray,
         y_proba: Optional[np.ndarray],
         feature_selection_result: Optional[Any] = None,
-        forward_selection_result: Optional[Any] = None,
         eval_strategy: str = "train_test",
         explain_positive_X: Optional[pd.DataFrame] = None,
         explain_positive_y: Optional[np.ndarray] = None,
@@ -123,7 +119,6 @@ class HTMLReportGenerator:
             y_pred: Predictions on test set
             y_proba: Predicted probabilities (classification only)
             feature_selection_result: Optional FeatureSelectionResult (backward)
-            forward_selection_result: Optional FeatureSelectionResult (forward)
         """
         self.logger.info("Generating HTML report...")
         
@@ -135,14 +130,8 @@ class HTMLReportGenerator:
             X_train, X_test, is_classification, eval_strategy=eval_strategy,
         ))
         # Pick the right TOC variant
-        has_bw = feature_selection_result is not None
-        has_fw = forward_selection_result is not None
-        if has_bw and has_fw:
-            content_parts.append(TOC_SECTION_WITH_BOTH_FS)
-        elif has_bw:
+        if feature_selection_result is not None:
             content_parts.append(TOC_SECTION_WITH_FS)
-        elif has_fw:
-            content_parts.append(TOC_SECTION_WITH_FWD_FS)
         else:
             content_parts.append(TOC_SECTION)
 
@@ -168,14 +157,7 @@ class HTMLReportGenerator:
             ))
             next_section += 1
 
-        # Forward feature selection / redundancy analysis
-        if forward_selection_result:
-            content_parts.append(self._add_feature_selection(
-                forward_selection_result,
-                section_start_template=FORWARD_SELECTION_SECTION_START,
-                section_number=next_section,
-            ))
-            next_section += 1
+
 
         # Positive-class local explanations (only when no feature selection)
         if explain_positive_X is not None and len(explain_positive_X) > 0:
