@@ -546,3 +546,77 @@ def plot_elimination_curve(
     return fig
 
 
+def plot_feature_density(
+    X_df: pd.DataFrame,
+    y_arr: np.ndarray,
+    feature_name: str,
+    is_classification: bool,
+    figsize: tuple = (5.5, 4),
+    logger: Optional[logging.Logger] = None
+) -> Optional[plt.Figure]:
+    """
+    Plot feature density (KDE), potentially split by class or target value.
+    
+    Args:
+        X_df: Feature DataFrame
+        y_arr: Target array
+        feature_name: Feature to plot
+        is_classification: Whether this is a classification task
+        figsize: Figure size
+        logger: Optional logger
+        
+    Returns:
+        Matplotlib figure or None
+    """
+    if logger is None:
+        logger = logging.getLogger("ebm_runner")
+    
+    if feature_name not in X_df.columns:
+        logger.warning(f"Feature '{feature_name}' not in X_df")
+        return None
+
+    try:
+        series = X_df[feature_name]
+        
+        # Skip if not numeric
+        if not np.issubdtype(series.dtype, np.number):
+            return None
+
+        fig = plt.figure(figsize=figsize)
+        
+        if is_classification:
+            # Split by class
+            classes = np.unique(y_arr)
+            for cls in classes:
+                mask = (y_arr == cls)
+                subset = series[mask].dropna()
+                if not subset.empty:
+                    subset.plot.kde(label=f"Class {cls}", ax=plt.gca())
+            plt.title(f"Density: {feature_name} (by Class)")
+        else:
+            # Regression: Split by median to show distribution differences for high/low target
+            median_y = np.median(y_arr)
+            low_mask = (y_arr <= median_y)
+            high_mask = (y_arr > median_y)
+            
+            low_subset = series[low_mask].dropna()
+            high_subset = series[high_mask].dropna()
+            
+            if not low_subset.empty:
+                low_subset.plot.kde(label="Low Target", ax=plt.gca())
+            if not high_subset.empty:
+                high_subset.plot.kde(label="High Target", ax=plt.gca())
+                
+            plt.title(f"Density: {feature_name} (by Target Median)")
+
+        plt.xlabel(feature_name)
+        plt.ylabel("Density")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        return fig
+
+    except Exception as e:
+        logger.error(f"Failed to plot density for {feature_name}: {e}")
+        return None
+
+

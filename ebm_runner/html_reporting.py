@@ -25,6 +25,7 @@ from .plotting import (
     plot_confusion_matrix,
     plot_interaction_shape,
     plot_elimination_curve,
+    plot_feature_density,
     fig_to_base64,
 )
 from .html_templates import (
@@ -65,6 +66,7 @@ from .html_templates import (
     TUNING_TABLE_START,
     TUNING_TABLE_ROW,
     TUNING_TABLE_END,
+    POSITIVE_CLASS_LOCAL_SECTION_START,
 )
 
 
@@ -102,6 +104,8 @@ class HTMLReportGenerator:
         feature_selection_result: Optional[Any] = None,
         forward_selection_result: Optional[Any] = None,
         eval_strategy: str = "train_test",
+        explain_positive_X: Optional[pd.DataFrame] = None,
+        explain_positive_y: Optional[np.ndarray] = None,
     ) -> None:
         """
         Generate comprehensive HTML report.
@@ -147,7 +151,7 @@ class HTMLReportGenerator:
             eval_strategy=eval_strategy,
         ))
         content_parts.append(self._add_global_interpretation(best_model))
-        content_parts.append(self._add_individual_features(best_model))
+        content_parts.append(self._add_individual_features(best_model, X_train, y_train, is_classification))
         content_parts.append(self._add_interactions(best_model))
         content_parts.append(self._add_local_explanations(best_model, X_test, y_test))
 
@@ -155,20 +159,31 @@ class HTMLReportGenerator:
         content_parts.append(self._add_tuning_section(cv_results, section_number=6))
 
         # Backward feature selection (section 7)
+        next_section = 7
         if feature_selection_result:
             content_parts.append(self._add_feature_selection(
                 feature_selection_result,
                 section_start_template=FEATURE_SELECTION_SECTION_START,
-                section_number=7,
+                section_number=next_section,
             ))
+            next_section += 1
 
-        # Forward feature selection / redundancy analysis (section 7 or 8)
+        # Forward feature selection / redundancy analysis
         if forward_selection_result:
-            fwd_section_num = 8 if feature_selection_result else 7
             content_parts.append(self._add_feature_selection(
                 forward_selection_result,
                 section_start_template=FORWARD_SELECTION_SECTION_START,
-                section_number=fwd_section_num,
+                section_number=next_section,
+            ))
+            next_section += 1
+
+        # Positive-class local explanations (only when no feature selection)
+        if explain_positive_X is not None and len(explain_positive_X) > 0:
+            content_parts.append(self._add_positive_class_explanations(
+                best_model,
+                explain_positive_X,
+                explain_positive_y,
+                section_number=next_section,
             ))
         
         # Combine all content
@@ -316,8 +331,14 @@ class HTMLReportGenerator:
             self.logger.error(f"Failed to generate global interpretation: {e}")
             return f"<h2 id='global-importance'>2. Global Feature Importance</h2>{NO_DATA_MESSAGE}"
     
-    def _add_individual_features(self, best_model: Any) -> str:
-        """Add individual feature analysis with shape plots for ALL features."""
+    def _add_individual_features(
+        self, 
+        best_model: Any,
+        X_df: pd.DataFrame,
+        y_arr: np.ndarray,
+        is_classification: bool
+    ) -> str:
+        """Add individual feature analysis with shape plots and density plots for ALL features."""
         parts = [INDIVIDUAL_FEATURES_SECTION_START]
         
         try:
@@ -336,18 +357,35 @@ class HTMLReportGenerator:
             # Sort by absolute importance
             features_with_scores.sort(key=lambda x: abs(x[1]), reverse=True)
             
-            self.logger.info(f"Generating shape plots for {len(features_with_scores)} features...")
+            self.logger.info(f"Generating shape and density plots for {len(features_with_scores)} features...")
             
-            # Generate shape plot for each feature
+            # Generate shape and density plot for each feature
             for feature_name, importance_score in features_with_scores:
-                fig = plot_shape_for_feature(global_exp, feature_name, logger=self.logger)
-                if fig is not None:
-                    img_b64 = fig_to_base64(fig)
-                    parts.append(FEATURE_SHAPE_SECTION.format(
-                        feature_name=feature_name,
-                        importance_score=f"{importance_score:.6f}",
-                        shape_plot=img_b64
-                    ))
+                # 1. Shape plot
+                fig_shape = plot_shape_for_feature(global_exp, feature_name, logger=self.logger)
+                if fig_shape is None:
+                    continue
+                    
+                shape_b64 = fig_to_base64(fig_shape)
+                
+                # 2. Density plot
+                fig_density = plot_feature_density(
+                    X_df, y_arr, feature_name, 
+                    is_classification=is_classification, 
+                    logger=self.logger
+                )
+                
+                density_plot_html = NO_DATA_MESSAGE
+                if fig_density is not None:
+                    density_b64 = fig_to_base64(fig_density)
+                    density_plot_html = f'<img src="data:image/png;base64,{density_b64}" alt="Density plot for {feature_name}">'
+                
+                parts.append(FEATURE_SHAPE_SECTION.format(
+                    feature_name=feature_name,
+                    importance_score=f"{importance_score:.6f}",
+                    shape_plot=shape_b64,
+                    density_plot_html=density_plot_html
+                ))
         
         except Exception as e:
             self.logger.error(f"Failed to generate individual feature analysis: {e}")
@@ -431,6 +469,55 @@ class HTMLReportGenerator:
         
         return "\n".join(parts)
     
+    def _add_positive_class_explanations(
+        self,
+        best_model: Any,
+        X_pos: pd.DataFrame,
+        y_pos: np.ndarray,
+        section_number: int = 7,
+    ) -> str:
+        """Add a section with local explanation plots for all positive-class samples."""
+        n_positive = len(X_pos)
+        parts = [POSITIVE_CLASS_LOCAL_SECTION_START.format(
+            section_number=section_number,
+            n_positive=n_positive,
+        )]
+
+        self.logger.info(
+            f"Generating local explanations for {n_positive} positive-class sample(s)…"
+        )
+
+        try:
+            # explain_local on the full positive subset at once
+            local_exp = best_model.explain_local(X_pos, y_pos)
+
+            for i in range(n_positive):
+                fig = plot_local_explanation_bar(
+                    local_exp, sample_index=i, top_n=15, logger=self.logger
+                )
+                img_b64 = fig_to_base64(fig)
+
+                true_val = y_pos[i]
+                pred_val = best_model.predict(X_pos.iloc[[i]])[0]
+                true_str = f"{true_val:.4f}" if isinstance(true_val, (int, float)) else str(true_val)
+                pred_str = f"{pred_val:.4f}" if isinstance(pred_val, (int, float)) else str(pred_val)
+
+                # Use the original dataset index as the sample label if available
+                orig_idx = X_pos.index[i] if hasattr(X_pos.index, '__getitem__') else i
+
+                parts.append(LOCAL_EXPLANATION_ITEM.format(
+                    sample_idx=orig_idx,
+                    true_value=true_str,
+                    pred_value=pred_str,
+                    local_plot=img_b64,
+                ))
+
+        except Exception as e:
+            self.logger.warning(f"Failed to generate positive-class explanations: {e}")
+            parts.append(NO_DATA_MESSAGE)
+
+        return "\n".join(parts)
+
     def _add_feature_selection(
         self,
         fs_result: Any,

@@ -103,6 +103,8 @@ def _run_from_csv(
     eval_n_splits: int = 5,
     eval_stratified: bool = True,
     tune_once: bool = False,
+    explain_positive_class: bool = False,
+    save_predictions: bool = False,
 ) -> None:
     """Run the EBM pipeline on a user-supplied CSV dataset."""
     logger.info("=" * 60)
@@ -150,6 +152,8 @@ def _run_from_csv(
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
         tune_once=tune_once,
+        explain_positive_class=explain_positive_class,
+        save_predictions=save_predictions,
         feature_names=ebm_feature_names,
         feature_types=ebm_feature_types,
         logger=logger,
@@ -206,6 +210,8 @@ def _run_classification(
     eval_n_splits: int = 5,
     eval_stratified: bool = True,
     tune_once: bool = False,
+    explain_positive_class: bool = False,
+    save_predictions: bool = False,
 ) -> None:
     """Run the breast-cancer classification demo."""
     logger.info("=" * 60)
@@ -223,6 +229,8 @@ def _run_classification(
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
         tune_once=tune_once,
+        explain_positive_class=explain_positive_class,
+        save_predictions=save_predictions,
         logger=logger,
     )
 
@@ -275,9 +283,10 @@ def _run_regression(
     tuning_n_splits: int = 5,
     tuning_stratified: bool = True,
     eval_n_splits: int = 5,
-
     eval_stratified: bool = True,
     tune_once: bool = False,
+    explain_positive_class: bool = False,
+    save_predictions: bool = False,
 ) -> None:
     """Run the diabetes regression demo."""
     logger.info("")
@@ -296,6 +305,7 @@ def _run_regression(
         eval_n_splits=eval_n_splits,
         eval_stratified=eval_stratified,
         tune_once=tune_once,
+        save_predictions=save_predictions,
         logger=logger,
     )
 
@@ -437,6 +447,21 @@ def _build_parser() -> argparse.ArgumentParser:
         default=not _DEFAULTS.eval_stratified,
         help="Disable stratified CV for evaluation (use plain KFold).",
     )
+    parser.add_argument(
+        "--explain-positive-class",
+        action="store_true",
+        default=_DEFAULTS.explain_positive_class,
+        help=(
+            "(Classification only) Add a dedicated report section with a local explanation "
+            "plot for every datapoint predicted in the positive class."
+        ),
+    )
+    parser.add_argument(
+        "--save-predictions",
+        action="store_true",
+        default=_DEFAULTS.save_predictions,
+        help="Write predictions.csv to the output directory with per-datapoint predictions in original dataset order.",
+    )
     return parser
 
 
@@ -466,6 +491,8 @@ def main() -> None:
         eval_n_splits=args.eval_folds,
         eval_stratified=not args.no_eval_stratify,
         tune_once=args.tune_once,
+        explain_positive_class=args.explain_positive_class,
+        save_predictions=args.save_predictions,
     )
 
     # ── CSV dataset mode ─────────────────────────────────────────────

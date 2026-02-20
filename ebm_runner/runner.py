@@ -98,6 +98,8 @@ class EBMRunner:
         tune_once: bool = RunConfig.tune_once,
         tuning_verbose: int = RunConfig.tuning_verbose,
         tuning_show_all: bool = RunConfig.tuning_show_all,
+        explain_positive_class: bool = RunConfig.explain_positive_class,
+        save_predictions: bool = RunConfig.save_predictions,
         feature_names: Optional[List[str]] = None,
         feature_types: Optional[List[str]] = None,
         logger: Optional[logging.Logger] = None,
@@ -157,6 +159,8 @@ class EBMRunner:
         self.tune_once = tune_once
         self.tuning_verbose = tuning_verbose
         self.tuning_show_all = tuning_show_all
+        self.explain_positive_class = explain_positive_class
+        self.save_predictions = save_predictions
         self.feature_names = feature_names
         self.feature_types = feature_types
 
@@ -242,7 +246,10 @@ class EBMRunner:
         feature_selection_result, forward_selection_result,
     ) -> EBMRunArtifacts:
         """Strategy: train/test split → CV-tune on train → evaluate on holdout."""
+        # Preserve original index so we can write predictions in dataset order
+        X_indexed = X_df.reset_index(drop=False)  # keeps original index as a column if needed
         X_train, X_test, y_train, y_test = self._split_data(X_df, y_arr, is_clf)
+        test_indices = X_test.index  # original positions in X_df
 
         search = self._create_search(is_clf, y_train, param_space,
                                       active_features=list(X_train.columns))
@@ -251,6 +258,25 @@ class EBMRunner:
         y_pred, y_proba, test_result = self._evaluate_model(
             best_model, X_test, y_test, is_clf
         )
+
+        # Save predictions CSV (in original dataset order)
+        if self.save_predictions:
+            self._save_predictions_csv(
+                original_indices=test_indices,
+                y_true=y_test,
+                y_pred=y_pred,
+                y_proba=y_proba,
+                is_clf=is_clf,
+            )
+
+        # Positive-class rows for local explanations  (predicted label == 1)
+        explain_positive_X = None
+        explain_positive_y = None
+        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+            pos_mask = y_pred == 1
+            if pos_mask.any():
+                explain_positive_X = X_test[pos_mask]
+                explain_positive_y = y_test[pos_mask]
 
         model_path, cv_csv = self._save_artifacts(best_model, search, model_name)
 
@@ -267,6 +293,8 @@ class EBMRunner:
             feature_selection_result=feature_selection_result,
             forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
+            explain_positive_X=explain_positive_X,
+            explain_positive_y=explain_positive_y,
         )
 
         return EBMRunArtifacts(
@@ -334,6 +362,25 @@ class EBMRunner:
             except Exception as e:
                 self.logger.warning(f"Could not get CV predicted probabilities: {e}")
 
+        # Save predictions CSV (OOF predictions, already in original order)
+        if self.save_predictions:
+            self._save_predictions_csv(
+                original_indices=X_df.index,
+                y_true=y_arr,
+                y_pred=y_pred,
+                y_proba=y_proba,
+                is_clf=is_clf,
+            )
+
+        # Positive-class rows for local explanations (predicted label == 1)
+        explain_positive_X = None
+        explain_positive_y = None
+        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+            pos_mask = y_pred == 1
+            if pos_mask.any():
+                explain_positive_X = X_df[pos_mask]
+                explain_positive_y = y_arr[pos_mask]
+
         # Refit the final model on all data
         best_model.fit(X_df, y_arr)
 
@@ -352,6 +399,8 @@ class EBMRunner:
             feature_selection_result=feature_selection_result,
             forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
+            explain_positive_X=explain_positive_X,
+            explain_positive_y=explain_positive_y,
         )
 
         return EBMRunArtifacts(
@@ -395,6 +444,25 @@ class EBMRunner:
             best_model, X_df, y_arr, is_clf
         )
 
+        # Save predictions CSV (train predictions in original order)
+        if self.save_predictions:
+            self._save_predictions_csv(
+                original_indices=X_df.index,
+                y_true=y_arr,
+                y_pred=y_pred,
+                y_proba=y_proba,
+                is_clf=is_clf,
+            )
+
+        # Positive-class rows for local explanations
+        explain_positive_X = None
+        explain_positive_y = None
+        if self.explain_positive_class and is_clf and feature_selection_result is None and forward_selection_result is None:
+            pos_mask = y_pred == 1
+            if pos_mask.any():
+                explain_positive_X = X_df[pos_mask]
+                explain_positive_y = y_arr[pos_mask]
+
         model_path, cv_csv = self._save_artifacts(best_model, search, model_name)
 
         html_path = os.path.join(self.output_dir, report_name)
@@ -410,6 +478,8 @@ class EBMRunner:
             feature_selection_result=feature_selection_result,
             forward_selection_result=forward_selection_result,
             eval_strategy=self.eval_strategy,
+            explain_positive_X=explain_positive_X,
+            explain_positive_y=explain_positive_y,
         )
 
         return EBMRunArtifacts(
@@ -621,6 +691,30 @@ class EBMRunner:
         self.logger.info(f"Saved CV results: {cv_csv}")
 
         return model_path, cv_csv
+
+    def _save_predictions_csv(
+        self,
+        original_indices,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_proba: Optional[np.ndarray],
+        is_clf: bool,
+    ) -> None:
+        """Write per-datapoint predictions to predictions.csv in original dataset order.
+
+        Columns: original_index, y_true, y_pred, and (binary classification only)
+        prob_positive.
+        """
+        df = pd.DataFrame({
+            "original_index": original_indices,
+            "y_true": y_true,
+            "y_pred": y_pred,
+        })
+        if is_clf and y_proba is not None and y_proba.ndim == 2 and y_proba.shape[1] == 2:
+            df["prob_positive"] = y_proba[:, 1]
+        path = os.path.join(self.output_dir, "predictions.csv")
+        df.to_csv(path, index=False)
+        self.logger.info(f"Saved predictions CSV: {path}")
 
     def _default_param_space(self, is_classification: bool) -> Dict[str, Any]:
         """

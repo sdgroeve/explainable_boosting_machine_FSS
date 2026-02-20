@@ -389,8 +389,15 @@ FEATURE_SHAPE_SECTION = """
 <div class="feature-section">
     <h3>{feature_name}</h3>
     <p><strong>Importance Score:</strong> {importance_score}</p>
-    <div class="plot-container">
-        <img src="data:image/png;base64,{shape_plot}" alt="Shape function for {feature_name}">
+    <div class="plot-grid">
+        <div class="plot-grid-item">
+            <h4>Shape Function (Partial Dependence)</h4>
+            <img src="data:image/png;base64,{shape_plot}" alt="Shape function for {feature_name}">
+        </div>
+        <div class="plot-grid-item">
+            <h4>Feature Distribution / Density</h4>
+            {density_plot_html}
+        </div>
     </div>
 </div>
 """
@@ -428,6 +435,16 @@ LOCAL_EXPLANATION_ITEM = """
 NO_DATA_MESSAGE = """
 <div class="alert alert-warning">
     <strong>No data available for this section.</strong>
+</div>
+"""
+
+POSITIVE_CLASS_LOCAL_SECTION_START = """
+<h2 id="positive-class-explanations">{section_number}. Positive Class — Local Explanations</h2>
+<p>Local explanations for every datapoint predicted in the positive class
+(predicted label&nbsp;=&nbsp;1). Each bar chart shows the per-feature contribution
+that pushed the model towards a positive prediction for that individual.</p>
+<div class="alert alert-info">
+    <strong>Note:</strong> {n_positive} sample(s) predicted as positive class.
 </div>
 """
 
