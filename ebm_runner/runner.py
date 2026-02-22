@@ -266,6 +266,8 @@ class EBMRunner:
                 y_pred=y_pred,
                 y_proba=y_proba,
                 is_clf=is_clf,
+                best_model=best_model,
+                X=X_test,
             )
 
         # Positive-class rows for local explanations  (predicted label == 1)
@@ -323,16 +325,73 @@ class EBMRunner:
                                       active_features=list(X_df.columns))
         best_model = self._run_hyperparameter_search(search, X_df, y_arr)
 
-        # Collect per-fold CV scores as the evaluation metric
+        # Collect per-fold CV scores, OOF predictions, and OOF local explanations
         eval_cv = self._make_cv(
             is_clf, y_arr,
             n_splits=self.eval_n_splits,
             stratified=self.eval_stratified,
         )
         scoring = self._make_scoring(is_clf, y_arr)
-        fold_scores = cross_val_score(
-            best_model, X_df, y_arr, cv=eval_cv, scoring=scoring, n_jobs=self.n_jobs,
-        )
+
+        # Manual CV loop to collect OOF predictions + local explanations
+        from sklearn.base import clone
+        from sklearn.metrics import check_scoring
+
+        scorer = check_scoring(best_model, scoring=scoring)
+        n_samples = len(X_df)
+        y_pred = np.empty(n_samples, dtype=y_arr.dtype)
+        y_proba = None
+        if is_clf and hasattr(best_model, "predict_proba"):
+            y_proba = np.empty((n_samples, 2), dtype=float)
+
+        # Prepare local explanation storage (only when saving predictions)
+        explain_df = None
+        if self.save_predictions:
+            feature_names = list(X_df.columns)
+            explain_df = pd.DataFrame(
+                np.nan, index=X_df.index,
+                columns=[f"explain_{fn}" for fn in feature_names],
+            )
+
+        fold_scores = []
+        for fold_i, (train_idx, test_idx) in enumerate(eval_cv.split(X_df, y_arr)):
+            X_fold_train = X_df.iloc[train_idx]
+            y_fold_train = y_arr[train_idx]
+            X_fold_test = X_df.iloc[test_idx]
+            y_fold_test = y_arr[test_idx]
+
+            fold_model = clone(best_model)
+            fold_model.fit(X_fold_train, y_fold_train)
+
+            fold_score = scorer(fold_model, X_fold_test, y_fold_test)
+            fold_scores.append(fold_score)
+            self.logger.info(
+                f"  Eval fold {fold_i + 1}: score={fold_score:.6f}"
+            )
+
+            y_pred[test_idx] = fold_model.predict(X_fold_test)
+            if y_proba is not None:
+                try:
+                    y_proba[test_idx] = fold_model.predict_proba(X_fold_test)
+                except Exception:
+                    y_proba = None
+
+            # Collect OOF local explanations
+            if explain_df is not None:
+                try:
+                    local_exp = fold_model.explain_local(X_fold_test, y_fold_test)
+                    for j, orig_idx in enumerate(test_idx):
+                        detail = local_exp.data(j)
+                        names = detail.get("names", [])
+                        scores = detail.get("scores", [])
+                        for name, score in zip(names, scores):
+                            col = f"explain_{name}"
+                            if col in explain_df.columns:
+                                explain_df.iloc[orig_idx, explain_df.columns.get_loc(col)] = float(score)
+                except Exception as e:
+                    self.logger.warning(f"Could not get OOF local explanations for fold {fold_i + 1}: {e}")
+
+        fold_scores = np.array(fold_scores)
         self.logger.info(
             f"CV fold scores: {fold_scores}  |  mean={fold_scores.mean():.6f}  "
             f"std={fold_scores.std():.6f}"
@@ -348,19 +407,7 @@ class EBMRunner:
 
         test_result = ValidationResult(metrics=metrics, extra={"fold_scores": fold_scores.tolist()})
 
-        # Generate out-of-fold predictions for the report plots
-        y_pred = cross_val_predict(best_model, X_df, y_arr, cv=eval_cv, n_jobs=self.n_jobs)
-        y_proba = None
-        if is_clf and hasattr(best_model, "predict_proba"):
-            try:
-                y_proba = cross_val_predict(
-                    best_model, X_df, y_arr, cv=eval_cv, method="predict_proba",
-                    n_jobs=self.n_jobs,
-                )
-            except Exception as e:
-                self.logger.warning(f"Could not get CV predicted probabilities: {e}")
-
-        # Save predictions CSV (OOF predictions, already in original order)
+        # Save predictions CSV (OOF predictions + OOF explanations)
         if self.save_predictions:
             self._save_predictions_csv(
                 original_indices=X_df.index,
@@ -368,6 +415,7 @@ class EBMRunner:
                 y_pred=y_pred,
                 y_proba=y_proba,
                 is_clf=is_clf,
+                explain_df=explain_df,
             )
 
         # Positive-class rows for local explanations (predicted label == 1)
@@ -449,6 +497,8 @@ class EBMRunner:
                 y_pred=y_pred,
                 y_proba=y_proba,
                 is_clf=is_clf,
+                best_model=best_model,
+                X=X_df,
             )
 
         # Positive-class rows for local explanations
@@ -695,11 +745,18 @@ class EBMRunner:
         y_pred: np.ndarray,
         y_proba: Optional[np.ndarray],
         is_clf: bool,
+        best_model: Optional[Any] = None,
+        X: Optional[pd.DataFrame] = None,
+        explain_df: Optional[pd.DataFrame] = None,
     ) -> None:
         """Write per-datapoint predictions to predictions.csv in original dataset order.
 
-        Columns: original_index, y_true, y_pred, and (binary classification only)
-        prob_positive.
+        Columns: original_index, y_true, y_pred, (binary classification only)
+        prob_positive, and per-feature local explanation columns (explain_<feature>).
+
+        Local explanations can be provided either by passing ``best_model`` and
+        ``X`` (computed here via ``explain_local``), or directly as a pre-built
+        ``explain_df`` DataFrame (used by the cv_only strategy for OOF explanations).
         """
         df = pd.DataFrame({
             "original_index": original_indices,
@@ -708,6 +765,30 @@ class EBMRunner:
         })
         if is_clf and y_proba is not None and y_proba.ndim == 2 and y_proba.shape[1] == 2:
             df["prob_positive"] = y_proba[:, 1]
+
+        # Add local explanation columns
+        if explain_df is not None:
+            # Pre-computed (e.g. OOF from cv_only)
+            df = pd.concat([df.reset_index(drop=True), explain_df.reset_index(drop=True)], axis=1)
+        elif best_model is not None and X is not None:
+            try:
+                local_exp = best_model.explain_local(X, y_true)
+                n_samples = len(X)
+                feature_names = list(X.columns)
+                explain_data = {f"explain_{fn}": np.nan for fn in feature_names}
+                explain_rows = pd.DataFrame(explain_data, index=range(n_samples))
+                for i in range(n_samples):
+                    detail = local_exp.data(i)
+                    names = detail.get("names", [])
+                    scores = detail.get("scores", [])
+                    for name, score in zip(names, scores):
+                        col = f"explain_{name}"
+                        if col in explain_rows.columns:
+                            explain_rows.at[i, col] = float(score)
+                df = pd.concat([df.reset_index(drop=True), explain_rows], axis=1)
+            except Exception as e:
+                self.logger.warning(f"Could not compute local explanations for predictions CSV: {e}")
+
         path = os.path.join(self.output_dir, "predictions.csv")
         df.to_csv(path, index=False)
         self.logger.info(f"Saved predictions CSV: {path}")

@@ -58,7 +58,7 @@ class RunConfig:
     n_jobs: int = 1
     ebm_n_jobs: int = -1
     enable_interactions: bool = True
-    eval_strategy: str = "train_only"   # "train_test" | "cv_only" | "train_only"
+    eval_strategy: str = "cv_only"   # "train_test" | "cv_only" | "train_only"
     tune_once: bool = False             # if True, tune only once on full features
     tuning_verbose: int = 1              # verbosity of hyperparameter search
     tuning_show_all: bool = False        # if True, log all candidates in console
