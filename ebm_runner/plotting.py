@@ -624,7 +624,7 @@ def plot_proxy_importances(
     target_feature: str,
     score: float,
     scoring_metric: str,
-    figsize: tuple = (7.5, 3.5),
+    figsize: tuple = (8, 4),
     logger: Optional[logging.Logger] = None
 ) -> plt.Figure:
     """
@@ -644,37 +644,65 @@ def plot_proxy_importances(
     if logger is None:
         logger = logging.getLogger("ebm_runner")
         
-    fig = plt.figure(figsize=figsize)
+    fig, ax = plt.subplots(figsize=figsize)
     
     try:
         if not top_proxies:
-            plt.text(0.5, 0.5, "No surrogate/proxy features found.", 
-                    ha='center', va='center', transform=plt.gca().transAxes)
-            plt.axis("off")
+            ax.text(0.5, 0.5, "No surrogate/proxy features found.", 
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=12, color='#7f8c8d')
+            ax.axis("off")
             return fig
             
         names = [p["feature"] for p in top_proxies]
         importances = [p["importance"] for p in top_proxies]
         
-        # We plot horizontal bars, top proxy at the top
-        y_pos = range(len(names))[::-1]
+        # Reverse so the most important appears at the top
+        names = names[::-1]
+        importances = importances[::-1]
         
-        plt.barh(y_pos, importances, color="#3498db")
-        plt.yticks(y_pos, names)
-        plt.xlabel("Importance in Proxy Model")
-        plt.title(f"Best proxies for '{target_feature}'\\nScore ({scoring_metric}): {score:.4f}")
+        y_pos = range(len(names))
+
+        # Colour gradient: most important -> darker blue
+        n = len(names)
+        colours = [plt.cm.Blues(0.4 + 0.5 * i / max(n - 1, 1)) for i in range(n)]
+        
+        bars = ax.barh(y_pos, importances, color=colours, edgecolor='white', height=0.6)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(names, fontsize=10)
+        ax.set_xlabel("Importance in Proxy Model", fontsize=11, labelpad=8)
+        
+        metric_label = {
+            "roc_auc": "ROC-AUC",
+            "roc_auc_ovr": "ROC-AUC (OvR)",
+            "r2": "R²",
+        }.get(scoring_metric, scoring_metric)
+        ax.set_title(
+            f"Proxy features for '{target_feature}'   ({metric_label} = {score:.4f})",
+            fontsize=12, fontweight='bold', pad=12
+        )
         
         # Annotate bars with values
-        for i, v in zip(y_pos, importances):
-            plt.text(v, i, f" {v:.4f}", va='center', fontsize=9)
+        for bar, v in zip(bars, importances):
+            ax.text(
+                bar.get_width() + max(importances) * 0.02,
+                bar.get_y() + bar.get_height() / 2,
+                f"{v:.4f}",
+                va='center', fontsize=9, color='#333'
+            )
             
-        plt.tight_layout()
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(axis='x', alpha=0.3, linestyle='--')
+        ax.set_xlim(0, max(importances) * 1.2)
+        
+        fig.tight_layout()
         return fig
         
     except Exception as e:
         logger.error(f"Failed to plot proxy importances for '{target_feature}': {e}")
-        plt.text(0.5, 0.5, f"Error plotting proxy importances:\\n{str(e)}", 
-                ha='center', va='center', transform=plt.gca().transAxes)
-        plt.axis("off")
+        ax.text(0.5, 0.5, f"Error plotting proxy importances:\n{str(e)}", 
+                ha='center', va='center', transform=ax.transAxes)
+        ax.axis("off")
         return fig
 
