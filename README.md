@@ -1,6 +1,8 @@
 # EBM Runner
 
-A comprehensive framework for training, tuning, evaluating, and interpreting **Explainable Boosting Machine (EBM)** models with automated HTML report generation.
+A comprehensive framework for training, tuning, evaluating, and interpreting **Explainable Boosting Machine (EBM)** models with automated HTML report generation, backward feature elimination, and feature-redundancy proxy testing.
+
+> For a detailed scientific description of all algorithms, see [`algorithms.md`](algorithms.md).
 
 ## Features
 
@@ -9,20 +11,25 @@ A comprehensive framework for training, tuning, evaluating, and interpreting **E
 - 🔍 **Advanced Model Interpretability**: 
     - Global feature importances
     - Shape functions for **all** features
-    - Automated detection and visualization of feature interactions
+    - Feature density plots (split by class or target median)
+    - Automated detection and visualisation of feature interactions
     - Local explanations for individual samples
+    - Optional positive-class local explanations for every predicted-positive sample
 - 🧬 **Feature Selection**:
     - **Backward elimination** – iteratively removes the *least* important feature to find a minimal subset
+    - **Tune-once** optimisation – tune hyperparameters once, reuse across all elimination steps
+    - **Batch removal** – remove a percentage of features per step for faster selection
+- 🔬 **Feature-on-Feature Proxy Test**: Analyse whether discarded features can predict selected features (redundancy analysis)
+- 📈 **t-SNE Visualisation**: Project local explanation vectors into 2D to reveal explanation structure
 - 📂 **CSV Dataset Support**: Load any CSV, specify a target column, and optionally supply feature-type definitions
 - 🌐 **HTML Reports**: Single-file interactive reports with embedded plots, metrics, and full model interpretation
-- 🧩 **Modular Design**: Clean, maintainable code structure with separate modules for each concern
-- ✅ **Input Validation**: Robust error checking for numeric and non-numeric targets, missing values, etc.
+- 💾 **Predictions Export**: Save per-datapoint predictions with local explanation values to CSV
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.7 or higher
+- Python 3.8 or higher
 - pip package manager
 
 ### Install Dependencies
@@ -55,12 +62,26 @@ Run with your own CSV data:
 python run.py --data my_dataset.csv --target label --task clf
 ```
 
-Enable backward feature-selection:
+Enable backward feature selection:
 
 ```bash
 python run.py --data my_dataset.csv --target label --task clf \
     --feature-selection \
     --fs-tolerance 0.02 --fs-min-features 3
+```
+
+Use cross-validation only (no holdout split):
+
+```bash
+python run.py --data my_dataset.csv --target label --task clf \
+    --eval-strategy cv_only --eval-folds 10
+```
+
+Save predictions with local explanations:
+
+```bash
+python run.py --data my_dataset.csv --target label --task clf \
+    --save-predictions
 ```
 
 ### Python API
@@ -82,8 +103,6 @@ runner = EBMRunner(
 # Optional: backward feature selection
 fs_result = runner.select_features(X, y, tolerance=0.02, min_features=3)
 
-
-
 # Train, tune, evaluate, and generate HTML report
 artifacts = runner.fit_optimize_validate(
     X, y,
@@ -97,21 +116,50 @@ print(f"Test metrics: {artifacts.test_result.metrics}")
 
 ## CLI Reference
 
+### Core Arguments
+
 | Argument | Default | Description |
 |---|---|---|
 | `--task` | `all` | `clf`, `reg`, or `all`. When `--data` is not set, `all` runs both demo datasets. |
 | `--data` | — | Path to a CSV file. Requires `--target`. |
 | `--target` | — | Name of the target column in the CSV. |
+| `--output-dir` | `./ebm_output` | Directory for all outputs (models, reports, CSVs). |
 | `--feature-types` | — | Path to a two-column CSV (`feature`, `type`) with EBM feature-type definitions. |
-| `--feature-selection` | off | Enable backward-elimination feature selection. |
 
+### Feature Selection
+
+| Argument | Default | Description |
+|---|---|---|
+| `--feature-selection` | off | Enable backward-elimination feature selection. |
 | `--fs-tolerance` | `0.02` | Maximum relative CV-score drop allowed during elimination (0.02 = 2%). |
 | `--fs-min-features` | `3` | Minimum number of features to keep. |
-| `--eval-strategy` | `train_test` | `train_test`, `cv_only`, or `train_only` (see below). |
+| `--fs-step-percent` | `0.0` | Percentage of features to remove per step (0 = one at a time). |
+| `--tune-once` | off | Tune hyperparameters once on full features, reuse during elimination. |
+
+### Evaluation
+
+| Argument | Default | Description |
+|---|---|---|
+| `--eval-strategy` | `cv_only` | `train_test`, `cv_only`, or `train_only` (see below). |
 | `--tuning-folds` | `5` | Number of CV folds for hyperparameter tuning. |
-| `--eval-folds` | `5` | Number of CV folds for cv_only evaluation. |
+| `--eval-folds` | `5` | Number of CV folds for `cv_only` evaluation. |
 | `--no-tuning-stratify` | off | Disable stratified CV for tuning. |
 | `--no-eval-stratify` | off | Disable stratified CV for evaluation. |
+| `--ebm-n-jobs` | `-1` | Number of parallel jobs for EBM internal training. |
+
+### Reporting & Export
+
+| Argument | Default | Description |
+|---|---|---|
+| `--save-predictions` | off | Write `predictions.csv` with per-datapoint predictions and local explanations. |
+| `--explain-positive-class` | off | Add local explanation plots for every positive-class prediction (classification only). |
+
+### Proxy Test
+
+| Argument | Default | Description |
+|---|---|---|
+| `--proxy-features-file` | — | Path to a feature selection summary CSV for proxy testing. |
+| `--proxy-num-features` | `5` | Number of top features to analyse in the proxy test. |
 
 ## Evaluation Strategies
 
@@ -125,34 +173,51 @@ Examples:
 
 ```bash
 # Default train/test split
-python run.py --task clf
+python run.py --task clf --eval-strategy train_test
 
 # 10-fold CV evaluation, 3-fold tuning
 python run.py --task clf --eval-strategy cv_only --eval-folds 10 --tuning-folds 3
-
-# CV without stratification on evaluation folds
-python run.py --task clf --eval-strategy cv_only --no-eval-stratify
 
 # Train-only: tune with 5-fold CV, refit on all data
 python run.py --task clf --eval-strategy train_only
 ```
 
+## Visualising Local Explanations
+
+After generating predictions with `--save-predictions`, use the standalone visualisation script to project local explanation vectors into 2D with t-SNE:
+
+```bash
+python visualize_explanations.py --predictions ./ebm_output/predictions.csv
+```
+
+Options:
+
+| Argument | Default | Description |
+|---|---|---|
+| `--predictions` | (required) | Path to `predictions.csv` with `explain_*` columns. |
+| `--normalize` | `none` | Normalisation: `none`, `standard`, or `minmax`. |
+| `--perplexity` | `30` | t-SNE perplexity parameter. |
+| `--label-column` | `y_true` | Column to use for colouring points. |
+| `--output-dir` | same as input | Directory for the HTML report and updated CSV. |
+
 ## Code Structure
 
 ```
-ML/
-├── run.py                        # CLI entry point
-└── ebm_runner/                   # Main package
-    ├── __init__.py               # Public exports
-    ├── config.py                 # Configuration dataclasses
-    ├── utils.py                  # Logging, validation, helpers
-    ├── runner.py                 # EBMRunner orchestrator
-    ├── feature_selection.py      # Feature elimination logic
-    ├── metrics.py                # Metric computation
-    ├── plotting.py               # All matplotlib plotting
-    ├── html_templates.py         # HTML/CSS template strings
-    ├── html_reporting.py         # Report assembly
-    └── reporting.py              # Legacy PDF reporting (unused)
+├── run.py                          # CLI entry point
+├── visualize_explanations.py       # t-SNE visualisation of local explanations
+├── algorithms.md                   # Detailed scientific report of all algorithms
+└── ebm_runner/                     # Main package
+    ├── __init__.py                 # Public exports
+    ├── config.py                   # Configuration dataclasses
+    ├── utils.py                    # Logging, validation, helpers
+    ├── runner.py                   # EBMRunner orchestrator
+    ├── feature_selection.py        # Backward feature elimination
+    ├── metrics.py                  # Metric computation
+    ├── plotting.py                 # All matplotlib plotting functions
+    ├── html_templates.py           # HTML/CSS template strings
+    ├── html_reporting.py           # HTML report assembly
+    ├── proxy_test.py               # Feature-on-feature proxy testing
+    └── proxy_reporting.py          # Proxy test HTML report
 ```
 
 ### How the pieces fit together
@@ -173,124 +238,58 @@ ML/
        │                    (html_templates.py,
        ▼                     plotting.py)
   FeatureSelectionResult
+
+                      ┌─────────────────┐
+                      │  Proxy Test      │
+                      │  (proxy_test.py) │
+                      └────────┬────────┘
+                               ▼
+                      ProxyReportGenerator
+                      (proxy_reporting.py)
 ```
 
-### Module details
+### Module Details
 
 #### `run.py` – CLI entry point
 
-Defines the argument parser and three "run" functions:
+Defines the argument parser and run functions:
 
-- **`_run_from_csv`** – loads a user-supplied CSV, optionally loads a feature-type definition file, runs feature selection(s), trains the model, and generates the report.
+- **`_run_from_csv`** – loads a user-supplied CSV, optionally loads a feature-type definition file, runs feature selection, trains the model, and generates the report.
 - **`_run_classification` / `_run_regression`** – convenience wrappers that use scikit-learn toy datasets for quick demos.
-
-Each function creates an `EBMRunner`, optionally calls `select_features()`, then calls `fit_optimize_validate()`.
+- **`_run_proxy_test`** – loads a feature ranking, selects top features, and runs the proxy test.
 
 #### `ebm_runner/runner.py` – `EBMRunner`
 
-The central orchestrator. Key concepts:
+The central orchestrator. Key methods:
 
 | Method | Purpose |
 |---|---|
-| `__init__` | Stores all configuration (output dir, CV folds, tuning iterations, feature names/types, etc.). |
-| `fit_optimize_validate` | End-to-end pipeline: prepares data → runs hyper-parameter search → evaluates on the test set → generates the HTML report. Accepts optional `feature_selection_result` to include in the report. |
-| `select_features` | Convenience wrapper that creates a `FeatureSelector` and runs it. |
-| `_make_estimator` | Instantiates `ExplainableBoostingClassifier` or `ExplainableBoostingRegressor`, forwarding any user-supplied `feature_names` / `feature_types`. |
-| `_prepare_data` | Coerces raw arrays / DataFrames into a standard `(DataFrame, ndarray, feature_names)` triple. |
+| `fit_optimize_validate` | End-to-end pipeline: prepares data → runs hyper-parameter search → evaluates → generates HTML report. |
+| `select_features` | Convenience wrapper that creates a `FeatureSelector` and runs backward elimination. |
+| `_run_train_test` | Train/test split strategy implementation. |
+| `_run_cv_only` | Cross-validation only strategy with OOF predictions. |
+| `_run_train_only` | Train-only strategy (no holdout). |
+| `_make_estimator` | Instantiates `ExplainableBoostingClassifier` or `ExplainableBoostingRegressor`. |
 
 #### `ebm_runner/feature_selection.py` – `FeatureSelector`
 
-Implements iterative feature elimination:
+Implements backward-elimination feature selection:
 
 1. Train an EBM on all features and record the baseline CV score.
 2. At each step, rank features by `term_importances()`.
-3. Remove the **least** important feature.
+3. Remove the least important feature(s).
 4. Retrain, compare the new CV score to the baseline.
 5. Stop when the relative score drop exceeds `tolerance` or `min_features` is reached.
 
-This produces a `FeatureSelectionResult` dataclass containing:
-
+Produces a `FeatureSelectionResult` containing:
 - `selected_features` – features remaining after elimination
 - `baseline_score` / `final_score` – CV scores before and after
-- `tolerance` / `direction` – configuration used
+- `tolerance` – configuration used
 - `history` – a DataFrame with one row per step (step number, removed feature, CV score, delta)
 
-#### `ebm_runner/html_reporting.py` / `html_templates.py` – HTML reports
+#### `ebm_runner/proxy_test.py` – `ProxyTestAnalyzer`
 
-`HTMLReportGenerator.generate_report()` assembles the final HTML file section by section:
-
-1. Title & run summary
-2. Table of contents (dynamically adjusts based on which feature-selection modes were used)
-3. Performance metrics & validation plots
-4. Global feature importance
-5. Individual feature shape functions
-6. Feature interactions
-7. Local explanations
-8. *(Optional)* Backward elimination results – summary, history table, elimination curve
-
-
-All plots are embedded as base64 PNG images, so the report is a single portable HTML file.
-
-#### `ebm_runner/config.py`
-
-Dataclasses for configuration:
-
-- **`RunConfig`** – training parameters (splits, iterations, etc.)
-- **`PlotConfig`** – plotting defaults (figure sizes, DPI)
-- **`ReportConfig`** – report-specific settings (top-N features, local samples count)
-
-#### `ebm_runner/utils.py`
-
-Shared helpers:
-
-- **`make_logger`** – creates a configured logger
-- **`validate_input_data`** – checks for NaN, inf, shape mismatches; handles both numeric and non-numeric targets safely
-- **`is_classification_target`** – auto-detects task type from the target values
-- **`ensure_output_dir`** – creates the output directory tree
-
-#### `ebm_runner/metrics.py`
-
-- **`compute_classification_metrics`** – accuracy, precision, recall, F1, ROC-AUC, log-loss
-- **`compute_regression_metrics`** – RMSE, MAE, R², explained variance
-- **`ValidationResult`** dataclass returned by the runner
-
-#### `ebm_runner/plotting.py`
-
-Pure matplotlib plotting functions, each returning a `Figure`:
-
-- `plot_feature_importances` – horizontal bar chart
-- `plot_shape_for_feature` – EBM shape function
-- `plot_interaction_shape` – 2D interaction heatmap
-- `plot_local_explanation_bar` – per-sample feature contributions
-- `plot_classification_curves` – ROC, PR, calibration
-- `plot_regression_diagnostics` – residuals, distribution, predicted-vs-true
-- `plot_confusion_matrix`
-- `plot_elimination_curve` – CV score vs. number of features (used by both elimination modes)
-- `fig_to_base64` – serializes any figure to a base64 string for HTML embedding
-
-## EBMRunner Parameters
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `output_dir` | str | `"./ebm_output"` | Directory for outputs |
-| `random_state` | int | `42` | Random seed for reproducibility |
-| `force_task` | str \| None | `None` | Force `'classification'` or `'regression'` |
-| `test_size` | float | `0.2` | Fraction of data for holdout test |
-| `val_size` | float | `0.0` | Fraction for validation (0 = use CV only) |
-| `n_splits` | int | `5` | Number of CV folds |
-| `n_iter` | int | `40` | Iterations for RandomizedSearchCV |
-| `use_grid` | bool | `False` | Use GridSearchCV instead |
-| `n_jobs` | int | `-1` | Parallel jobs for search (-1 = all cores) |
-| `ebm_n_jobs` | int | `1` | Parallel jobs for EBM training |
-| `enable_interactions` | bool | `True` | Enable interaction terms in search |
-| `eval_strategy` | str | `"train_test"` | `"train_test"`, `"cv_only"`, or `"train_only"` |
-| `tuning_n_splits` | int | `5` | CV folds for hyperparameter tuning |
-| `tuning_stratified` | bool | `True` | Stratify tuning folds for classification |
-| `eval_n_splits` | int | `5` | CV folds for cv_only evaluation |
-| `eval_stratified` | bool | `True` | Stratify eval folds for classification |
-| `feature_names` | list \| None | `None` | Feature names passed to the EBM |
-| `feature_types` | list \| None | `None` | Feature types passed to the EBM |
-| `n_local_samples_in_report` | int | `3` | Local explanations in report |
+For each selected feature, trains an EBM on the discarded features to predict it. Reports the cross-validated predictability score and top proxy features. A high score indicates redundancy.
 
 ## Output Structure
 
@@ -301,27 +300,28 @@ output_dir/
 ├── best_ebm_model.joblib          # Trained model
 ├── cv_results.csv                  # Cross-validation results
 ├── ebm_report.html                 # Comprehensive HTML report
-└── plots/                          # Generated plot images (also embedded in HTML)
-    ├── feature_importances.png
-    ├── shape_<feature>.png
-    ├── local_0.png
-    ├── confusion_matrix.png        # (classification)
-    ├── class_curve_*.png           # (classification)
-    └── reg_diag_*.png              # (regression)
+├── predictions.csv                 # (if --save-predictions) Per-datapoint predictions + explanations
+├── feature_selection_summary.csv   # (if --feature-selection) Elimination history
+├── proxy_report.html               # (if proxy test was run) Proxy test results
+└── plots/                          # Plot images directory
 ```
 
 ## HTML Report Contents
 
 The generated HTML report includes:
 
-1. **Run Summary** – task type, data sizes, feature count
-2. **Performance Metrics** – detailed test-set metrics
-3. **Validation Plots** – confusion matrix / ROC / PR (classification) or residual diagnostics (regression)
-4. **Global Feature Importance** – ranking of all features and interactions
-5. **Individual Feature Analysis** – shape functions for every feature
-6. **Feature Interactions** – plots for all detected interactions
-7. **Local Interpretation** – per-sample feature contributions
-8. **Feature Subset Selection (Backward)** – *(when `--feature-selection` is enabled)* summary, history table, elimination curve
+1. **Run Summary** – task type, data sizes, feature count, evaluation strategy
+2. **Performance Metrics** – detailed metrics table
+3. **Validation Plots** – confusion matrix / ROC / PR / calibration (classification) or residual diagnostics (regression)
+4. **Global Feature Importance** – ranking of all features
+5. **Individual Feature Analysis** – shape functions + density plots for every feature
+6. **Feature Interactions** – heatmaps for all detected interactions
+7. **Local Explanations** – per-sample feature contribution bar charts
+8. **Hyperparameter Tuning** – full CV results table with all evaluated candidates
+9. **Feature Selection** *(optional)* – summary, history table, elimination curve
+10. **Positive-Class Explanations** *(optional)* – local explanations for all positive-class predictions
+
+All plots are embedded as base64 PNG images, so the report is a single portable HTML file.
 
 ## Troubleshooting
 
@@ -336,7 +336,7 @@ pip install interpret
 
 **Memory errors during hyperparameter search**
 
-Reduce parallelization or search space:
+Reduce parallelisation or search space:
 ```python
 runner = EBMRunner(n_jobs=1, n_iter=20, ebm_n_jobs=1)
 ```
@@ -362,21 +362,30 @@ This code is provided as-is for educational and research purposes.
 
 ## Version History
 
-### v1.2.0 (Current)
+### v1.3.0 (Current)
+- Feature-on-feature proxy testing (`--proxy-features-file`)
+- t-SNE visualisation of local explanation vectors (`visualize_explanations.py`)
+- Predictions CSV export with per-feature local explanations (`--save-predictions`)
+- Positive-class local explanations (`--explain-positive-class`)
+- Tune-once optimisation for feature selection (`--tune-once`)
+- Batch feature removal (`--fs-step-percent`)
+- Cross-validation only and train-only evaluation strategies
+- Feature density plots in reports
+- Removed legacy PDF reporting module
+
+### v1.2.0
 - CSV dataset loading via `--data` / `--target` CLI arguments
 - Feature-type definition file support (`--feature-types`)
 - Backward-elimination feature selection (`--feature-selection`)
-
 - Robust handling of non-numeric targets and missing values
 
 ### v1.1.0
 - Switched from PDF to interactive HTML reports
-- Added automated feature interaction visualization
+- Added automated feature interaction visualisation
 - Comprehensive shape plots for all features
 - Embedded plots for single-file portability
 
 ### v1.0.0
 - Initial modular release
-- Legacy PDF reporting
 - Automated hyperparameter tuning
 - Global and local interpretability
