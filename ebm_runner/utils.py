@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 
 def make_logger(name: str = "ebm_runner", level: int = logging.INFO) -> logging.Logger:
@@ -53,24 +52,6 @@ def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
-def save_fig_png(fig: plt.Figure, out_path: str, dpi: int = 200) -> str:
-    """
-    Save matplotlib figure as PNG file.
-    
-    Args:
-        fig: Matplotlib figure to save
-        out_path: Output file path
-        dpi: Dots per inch for output image
-        
-    Returns:
-        Path to saved file
-    """
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-    return out_path
-
-
 def safe_json(obj: Any) -> str:
     """
     Safely convert object to JSON string.
@@ -86,65 +67,6 @@ def safe_json(obj: Any) -> str:
     except Exception as e:
         logging.getLogger("ebm_runner").warning(f"JSON serialization failed: {e}")
         return str(obj)
-
-
-def df_to_table_data(df: pd.DataFrame, max_rows: int = 20) -> List[List[Any]]:
-    """
-    Convert DataFrame to table data format for ReportLab.
-    
-    Args:
-        df: Input DataFrame
-        max_rows: Maximum number of rows to include
-        
-    Returns:
-        List of lists with header row and data rows
-    """
-    df2 = df.copy()
-    if len(df2) > max_rows:
-        df2 = df2.head(max_rows)
-    df2 = df2.reset_index(drop=True)
-    header = list(df2.columns)
-    rows = df2.values.tolist()
-    return [header] + rows
-
-
-def wrap_long(s: str, n: int = 110) -> str:
-    """
-    Wrap long strings with HTML line breaks.
-    
-    Args:
-        s: String to wrap
-        n: Maximum length before wrapping
-        
-    Returns:
-        Wrapped string with <br/> tags
-    """
-    s = str(s)
-    if len(s) <= n:
-        return s
-    chunks = [s[i:i+n] for i in range(0, len(s), n)]
-    return "<br/>".join(chunks)
-
-
-def sanitize_filename(s: str, max_length: int = 120) -> str:
-    """
-    Sanitize string for use as filename.
-    
-    Args:
-        s: String to sanitize
-        max_length: Maximum filename length
-        
-    Returns:
-        Sanitized filename string
-    """
-    keep = []
-    for ch in str(s):
-        if ch.isalnum() or ch in ("-", "_"):
-            keep.append(ch)
-        else:
-            keep.append("_")
-    out = "".join(keep)
-    return out[:max_length]
 
 
 def is_classification_target(

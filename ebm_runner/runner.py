@@ -23,8 +23,6 @@ from sklearn.model_selection import (
     GridSearchCV,
     StratifiedKFold,
     KFold,
-    cross_val_predict,
-    cross_val_score,
 )
 
 try:
@@ -70,7 +68,7 @@ class EBMRunner:
     1. Data validation and splitting
     2. Hyperparameter tuning via cross-validation
     3. Model evaluation on holdout test set
-    4. PDF report generation with interpretability plots
+    4. HTML report generation with interpretability plots
     5. Artifact persistence (model, results, plots)
     """
     
@@ -245,8 +243,6 @@ class EBMRunner:
         feature_selection_result,
     ) -> EBMRunArtifacts:
         """Strategy: train/test split → CV-tune on train → evaluate on holdout."""
-        # Preserve original index so we can write predictions in dataset order
-        X_indexed = X_df.reset_index(drop=False)  # keeps original index as a column if needed
         X_train, X_test, y_train, y_test = self._split_data(X_df, y_arr, is_clf)
         test_indices = X_test.index  # original positions in X_df
 

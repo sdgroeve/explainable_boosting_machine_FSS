@@ -1,15 +1,9 @@
 """
 Model-based feature subset selection for EBM models.
 
-This module provides feature elimination that iteratively removes features
-and retrains the model, stopping when performance degrades beyond a
-user-specified tolerance.
-
-Two directions are supported:
-- **backward** (default): removes the *least* important feature at each step,
-  yielding a minimal feature set.
-- **forward**: removes the *most* important feature at each step, revealing
-  feature redundancy.
+This module provides backward-elimination feature selection that iteratively
+removes the least important feature and retrains the model, stopping when
+performance degrades beyond a user-specified tolerance.
 """
 
 import os
@@ -34,7 +28,6 @@ class FeatureSelectionResult:
         baseline_score: CV score using all features.
         final_score: CV score using the remaining feature subset.
         tolerance: The tolerance that was configured for elimination.
-        direction: ``"backward"`` or ``"forward"``.
         history: DataFrame with one row per elimination step showing
             which feature was removed, the resulting CV score, and the
             delta from baseline.
@@ -101,9 +94,7 @@ class FeatureSelector:
         *,
         feature_names: Optional[List[str]] = None,
     ) -> FeatureSelectionResult:
-        """Run feature elimination.
-
-        label = "backward-elimination"
+        """Run backward-elimination feature selection.
 
         Args:
             X: Feature matrix (DataFrame or array).
@@ -274,26 +265,13 @@ class FeatureSelector:
 
         # Optimization: Reuse fixed params if tune_once is active
         if getattr(self, "fixed_params", None) is not None:
-            # 1. Create the estimator with the fixed params
             estimator = self.runner._make_estimator(is_clf, active_features=active_features)
             estimator.set_params(**self.fixed_params)
 
-            # 2. Evaluate via Cross-Validation (since we aren't searching)
+            # Evaluate via cross-validation with the fixed hyperparameters
             cv = self.runner._make_cv(is_clf, y)
             scoring = self.runner._make_scoring(is_clf, y)
-            
-            # Note: We need the mean CV score to compare against baseline
-            cv_scores = pd.Series(
-                # Use cross_val_score directly
-                # We need to manually handle the cross_val_score import or use runner's logic if exposed
-                # But looking at runner.py, cross_val_score is imported.
-                # However, this method is in a different file.
-                # We need to import cross_val_score here or rely on runner.
-                # Let's check imports in this file.
-            )
-            
-            # Re-implementation of CV scoring here since we don't have a helper for "just score this model"
-            # in runner that doesn't also do other things.
+
             from sklearn.model_selection import cross_val_score
             scores = cross_val_score(
                 estimator, X, y,
@@ -301,9 +279,9 @@ class FeatureSelector:
             )
             mean_score = scores.mean()
 
-            # 3. Fit on the current subset to get importances for the next step
+            # Fit on the full subset to get importances for the next step
             estimator.fit(X, y)
-            
+
             return mean_score, estimator
 
         # Normal full search

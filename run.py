@@ -417,7 +417,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Path to a CSV file with columns 'column' and 'type'. "
+            "Path to a CSV file with columns 'feature' and 'type'. "
             "The 'type' column may contain plain strings (e.g. 'continuous') "
             "or bracket-delimited lists (e.g. '[1,2,3+]')."
         ),

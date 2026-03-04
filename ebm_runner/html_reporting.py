@@ -158,7 +158,6 @@ class HTMLReportGenerator:
             next_section += 1
 
 
-
         # Positive-class local explanations (only when no feature selection)
         if explain_positive_X is not None and len(explain_positive_X) > 0:
             content_parts.append(self._add_positive_class_explanations(
